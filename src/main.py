@@ -186,6 +186,10 @@ def main():
         sys.exit(app.exec())
         
     except Exception as e:
+        import traceback
+        with open("crash.txt", "w") as f:
+            f.write(traceback.format_exc())
+            
         logger.error(f"Erro fatal ao iniciar aplicação: {e}", exc_info=True)
         
         # Mostrar erro na GUI

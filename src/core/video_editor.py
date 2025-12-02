@@ -35,15 +35,15 @@ class VideoEditor:
         """
         logger.info(f"Queimando legendas em {video_path}")
         
-        # Para Windows, o filtro subtitles precisa de escape específico
-        # Escapar: \ vira \\ e : vira \:
-        subtitle_str = str(subtitle_path).replace('\\', '\\\\\\\\').replace(':', '\\\\:')
+        # Para Windows, o filtro subtitles funciona melhor com forward slashes e escape no drive
+        # Ex: C:/path/to/file.ass -> C\:/path/to/file.ass
+        subtitle_str = str(subtitle_path).replace('\\', '/').replace(':', '\\:')
         
         # Comando FFmpeg
         cmd = [
             "ffmpeg",
             "-i", str(video_path),
-            "-vf", f"subtitles={subtitle_str}",
+            "-vf", f"subtitles='{subtitle_str}'",  # Aspas simples ajudam
             "-c:v", "libx264",
             "-preset", preset,
             "-crf", "23",
@@ -58,11 +58,13 @@ class VideoEditor:
         logger.info(f"Arquivo de saída esperado: {output_path}")
         
         try:
+            # stdin=subprocess.DEVNULL evita que o ffmpeg trave esperando input
             resultado = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=3600  # 1 hora timeout
+                timeout=3600,
+                stdin=subprocess.DEVNULL
             )
             
             logger.info(f"FFmpeg returncode: {resultado.returncode}")

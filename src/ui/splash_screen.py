@@ -86,3 +86,9 @@ class SplashScreen(QSplashScreen):
             self.status_label.setText(message)
         if QApplication.instance():
             QApplication.instance().processEvents()
+
+    def finish(self, window):
+        """Fecha a tela de splash"""
+        if window:
+            window.show()
+        self.close()

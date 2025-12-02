@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "G:\DarkAgent\src\main.py", line 170, in main
+    window = MainWindow()
+             ^^^^^^^^^^^^
+  File "G:\DarkAgent\src\ui\main_window.py", line 168, in __init__
+    QTimer.singleShot(100, self.check_first_run)
+    ^^^^^^
+NameError: name 'QTimer' is not defined

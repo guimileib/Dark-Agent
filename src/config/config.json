@@ -1,0 +1,7 @@
+{
+  "first_run": false,
+  "theme": "dark",
+  "language": "pt-BR",
+  "whisper_model": "base",
+  "whisper_device": "auto"
+}
