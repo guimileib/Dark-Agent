@@ -163,6 +163,23 @@ class MainWindow(QMainWindow):
         
         # Iniciar geração de previews em segundo plano
         self.iniciar_geracao_previews()
+        
+        # Verificar primeiro uso
+        QTimer.singleShot(100, self.check_first_run)
+        
+    def check_first_run(self):
+        """Verifica se é a primeira execução e mostra tutorial"""
+        if settings.first_run:
+            try:
+                from ui.onboarding_dialog import OnboardingDialog
+                dialog = OnboardingDialog(self)
+                dialog.exec()
+                
+                # Marcar como visto e salvar
+                settings.first_run = False
+                settings.save_config()
+            except Exception as e:
+                logger.error(f"Erro ao mostrar onboarding: {e}")
     
     def init_ui(self):
         self.setWindowTitle("DarkAgent Pro v2.0")

@@ -50,6 +50,41 @@ class Settings:
         
         # Carregar estilos
         self._estilos = self._carregar_estilos()
+        
+        # Carregar configurações gerais
+        self.first_run = True
+        self.load_config()
+        
+    def load_config(self):
+        """Carrega configurações do arquivo JSON"""
+        config_file = self.config_dir / "config.json"
+        if config_file.exists():
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.first_run = data.get("first_run", True)
+                    self.theme = data.get("theme", self.theme)
+                    self.language = data.get("language", self.language)
+                    self.whisper_model = data.get("whisper_model", self.whisper_model)
+                    self.whisper_device = data.get("whisper_device", self.whisper_device)
+            except Exception as e:
+                print(f"Erro ao carregar config: {e}")
+
+    def save_config(self):
+        """Salva configurações no arquivo JSON"""
+        config_file = self.config_dir / "config.json"
+        data = {
+            "first_run": self.first_run,
+            "theme": self.theme,
+            "language": self.language,
+            "whisper_model": self.whisper_model,
+            "whisper_device": self.whisper_device
+        }
+        try:
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"Erro ao salvar config: {e}")
     
     def _carregar_estilos(self) -> Dict[str, EstiloLegenda]:
         """Carrega estilos do arquivo JSON"""
