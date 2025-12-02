@@ -284,6 +284,34 @@ class ClipWidget(QWidget):
         self.check_todos.setToolTip("Gera todos os clips possíveis e ordena por pontuação")
         self.check_todos.setChecked(True)
         self.check_todos.toggled.connect(self.on_check_todos_toggled)
+        
+        # Estilo personalizado para fundo transparente e checkmark
+        check_icon_path = Path("src/assets/check.svg").absolute().as_posix()
+        self.check_todos.setStyleSheet(f"""
+            QCheckBox {{
+                background-color: transparent;
+                color: #e2e8f0;
+                font-size: 14px;
+                font-weight: bold;
+                spacing: 8px;
+            }}
+            QCheckBox::indicator {{
+                width: 22px;
+                height: 22px;
+                border: 2px solid #475569;
+                border-radius: 6px;
+                background: rgba(30, 41, 59, 0.5);
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: #3b82f6;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: #3b82f6;
+                border-color: #3b82f6;
+                image: url({check_icon_path});
+            }}
+        """)
+        
         params_layout.addWidget(self.check_todos)
         
         # Trigger initial state

@@ -180,10 +180,50 @@ class MainWindow(QMainWindow):
                 settings.save_config()
             except Exception as e:
                 logger.error(f"Erro ao mostrar onboarding: {e}")
+
+    def show_centered_message(self, title, message, icon=QMessageBox.Icon.Information):
+        """Mostra uma mensagem centralizada na janela"""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setIcon(icon)
+        
+        # Estilo para garantir visibilidade
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #1e293b;
+                color: white;
+            }
+            QLabel {
+                color: white;
+            }
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                padding: 5px 15px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+        """)
+        
+        # Centralizar
+        msg_box.show()
+        
+        # Calcular posição central
+        geo = self.geometry()
+        x = geo.x() + (geo.width() - msg_box.width()) // 2
+        y = geo.y() + (geo.height() - msg_box.height()) // 2
+        msg_box.move(x, y)
+        
+        msg_box.exec()
     
     def init_ui(self):
         self.setWindowTitle("DarkAgent Pro v2.0")
-        self.setGeometry(100, 100, 1000, 800)
+        self.resize(1200, 800) # Tamanho base razoável
+        self.showMaximized()   # Maximizar ao iniciar
         
         # Set Icon
         icon_path = settings.assets_dir / "icon.png"
@@ -294,13 +334,13 @@ class MainWindow(QMainWindow):
         config = self.download_widget.get_configuracao()
         
         if not config["url"]:
-            QMessageBox.warning(self, "Aviso", "Por favor, insira uma URL do YouTube!")
+            self.show_centered_message("Aviso", "Por favor, insira uma URL do YouTube!", QMessageBox.Icon.Warning)
             return
         
         estilo = self.subtitle_widget.get_estilo_atual()
         
         if not estilo:
-            QMessageBox.warning(self, "Aviso", "Por favor, selecione um estilo de legenda!")
+            self.show_centered_message("Aviso", "Por favor, selecione um estilo de legenda!", QMessageBox.Icon.Warning)
             return
         
         # Desabilitar botão
@@ -324,9 +364,9 @@ class MainWindow(QMainWindow):
         self.btn_processar.setEnabled(True)
         
         if sucesso:
-            QMessageBox.information(self, "Sucesso! 🎉", mensagem)
+            self.show_centered_message("Sucesso! 🎉", mensagem, QMessageBox.Icon.Information)
         else:
-            QMessageBox.critical(self, "Erro ❌", mensagem)
+            self.show_centered_message("Erro ❌", mensagem, QMessageBox.Icon.Critical)
         
         self.status_label.setText("")
         
@@ -385,7 +425,7 @@ class MainWindow(QMainWindow):
             fim = info_clip.get("fim")
             
             if not video_path or inicio is None or fim is None:
-                QMessageBox.warning(self, "Aviso", "Informações do clip incompletas!")
+                self.show_centered_message("Aviso", "Informações do clip incompletas!", QMessageBox.Icon.Warning)
                 return
             
             # Criar pasta de saída se não existir
@@ -408,17 +448,17 @@ class MainWindow(QMainWindow):
             self.progress_bar.setValue(100)
             
             if sucesso:
-                QMessageBox.information(
-                    self,
+                self.show_centered_message(
                     "Sucesso! 🎉",
-                    f"Clip extraído com sucesso!\n\nSalvo em: {output_path}"
+                    f"Clip extraído com sucesso!\n\nSalvo em: {output_path}",
+                    QMessageBox.Icon.Information
                 )
                 logger.info(f"Clip extraído: {output_path}")
             else:
-                QMessageBox.critical(
-                    self,
+                self.show_centered_message(
                     "Erro ❌",
-                    "Falha ao extrair o clip. Verifique os logs."
+                    "Falha ao extrair o clip. Verifique os logs.",
+                    QMessageBox.Icon.Critical
                 )
             
             self.status_label.setText("")
@@ -427,7 +467,7 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             logger.error(f"Erro ao processar clip: {e}")
-            QMessageBox.critical(self, "Erro", f"Erro ao processar clip: {str(e)}")
+            self.show_centered_message("Erro", f"Erro ao processar clip: {str(e)}", QMessageBox.Icon.Critical)
             self.status_label.setText("")
             self.progress_bar.setVisible(False)
             self.progress_bar.setValue(0)

@@ -18,8 +18,38 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class SinglePreviewGeneratorThread(QThread):
+    """Thread para gerar um único preview sob demanda"""
+    
+    preview_ready = pyqtSignal(str)  # caminho
+    
+    def __init__(self, renderer, estilo, tamanho, force=False):
+        super().__init__()
+        self.renderer = renderer
+        self.estilo = estilo
+        self.tamanho = tamanho
+        self.force = force
+        
+    def run(self):
+        try:
+            # Clonar estilo para não afetar o original durante renderização
+            import copy
+            estilo_clone = copy.deepcopy(self.estilo)
+            
+            path = self.renderer.gerar_preview(
+                estilo_clone, 
+                tamanho=self.tamanho, 
+                force=self.force
+            )
+            
+            if path:
+                self.preview_ready.emit(str(path))
+        except Exception as e:
+            logger.error(f"Erro na thread de preview: {e}")
+
+
 class PreviewGeneratorThread(QThread):
-    """Thread para gerar previews em background"""
+    """Thread para gerar previews em background (todos os tamanhos)"""
     
     preview_gerado = pyqtSignal(int, str)  # tamanho, caminho
     concluido = pyqtSignal()
@@ -91,13 +121,14 @@ class SubtitleWidget(QWidget):
         # Criar botões para cada estilo em grid
         self.botoes_estilos = {}
         icons = {
-            "tiktok_classic": "🎵",
-            "tiktok_bold": "🎵",
-            "reels_bold": "📷",
-            "youtube_shorts": "▶️",
-            "clean_minimal": "━",
-            "neon_glow": "□",
-            "bold_impact": "🎬"
+            "tiktok_classic": "🎵",   # Clássico
+            "tiktok_bold": "💣",      # Impactante
+            "reels_bold": "📸",       # Instagram
+            "youtube_shorts": "▶️",   # YouTube
+            "clean_minimal": "✨",    # Limpo
+            "neon_glow": "🌟",        # Neon
+            "bold_impact": "💥",      # Impacto
+            "gradient_wave": "🌊"     # Gradiente
         }
         
         row, col = 0, 0
@@ -395,25 +426,28 @@ class SubtitleWidget(QWidget):
                 logger.debug(f"Preview exibido: {caminho_preview}")
                 return
         
-        # Fallback: gerar preview sob demanda
+        # Fallback: gerar preview sob demanda (ASYNC)
         if self.preview_renderer:
-            logger.info(f"Gerando preview sob demanda para {estilo_id} tamanho {tamanho} cor {cor_safe}")
-            preview_path = self.preview_renderer.gerar_preview(self.estilo_atual, tamanho=tamanho, force=force)
+            logger.info(f"Iniciando geração de preview async para {estilo_id} tamanho {tamanho} cor {cor_safe}")
             
-            if preview_path and preview_path.exists():
-                # Adicionar ao cache
-                if estilo_id not in self.previews_cache:
-                    self.previews_cache[estilo_id] = {}
-                self.previews_cache[estilo_id][tamanho] = str(preview_path)
-                
-                # Exibir
-                pixmap = QPixmap(str(preview_path))
-                if not pixmap.isNull():
-                    scaled = pixmap.scaled(640, 360, Qt.AspectRatioMode.KeepAspectRatio, 
-                                          Qt.TransformationMode.SmoothTransformation)
-                    self.preview_canvas.setPixmap(scaled)
-                    logger.info(f"Preview gerado e exibido: {preview_path}")
-                    return
+            # Mostrar loading
+            self.preview_canvas.setText("Gerando preview...")
+            
+            # Cancelar thread anterior se existir
+            if self.preview_thread and self.preview_thread.isRunning():
+                self.preview_thread.terminate()
+                self.preview_thread.wait()
+            
+            # Iniciar nova thread
+            self.preview_thread = SinglePreviewGeneratorThread(
+                self.preview_renderer, 
+                self.estilo_atual, 
+                tamanho, 
+                force=force
+            )
+            self.preview_thread.preview_ready.connect(self._on_preview_ready)
+            self.preview_thread.start()
+            return
         
         # Fallback final: mostrar informações do estilo
         info = f"{self.estilo_atual.nome}\n\n"
@@ -422,6 +456,31 @@ class SubtitleWidget(QWidget):
         info += f"Fonte: {self.estilo_atual.fonte}"
         self.preview_canvas.setText(info)
         logger.warning(f"Preview não disponível para {estilo_id} tamanho {tamanho}")
+
+    def _on_preview_ready(self, path):
+        """Callback quando o preview async fica pronto"""
+        if not self.estilo_atual:
+            return
+            
+        # Verificar se o preview gerado ainda corresponde ao estilo atual (race condition)
+        # Mas como passamos o path, podemos apenas exibir e atualizar o cache
+        
+        estilo_id = self.estilo_atual.id
+        tamanho = self.estilo_atual.tamanho
+        
+        # Atualizar cache
+        if estilo_id not in self.previews_cache:
+            self.previews_cache[estilo_id] = {}
+        self.previews_cache[estilo_id][tamanho] = path
+        
+        # Exibir
+        if Path(path).exists():
+            pixmap = QPixmap(path)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(640, 360, Qt.AspectRatioMode.KeepAspectRatio, 
+                                      Qt.TransformationMode.SmoothTransformation)
+                self.preview_canvas.setPixmap(scaled)
+                logger.info(f"Preview async exibido: {path}")
     
     def recarregar_previews(self):
         """Recarrega previews após geração em background"""
