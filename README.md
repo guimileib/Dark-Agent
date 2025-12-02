@@ -87,11 +87,10 @@ Pull requests são bem-vindos! Para mudanças grandes, abra uma issue primeiro.
 
 ## 📧 Contato
 
-- Email: suporte@darkagent.pro
-- Website: https://darkagent.pro
-- Discord: https://discord.gg/darkagent
+- Email: visualizepluss@gmail.com
+- Website: https://visualizeplus.com    
 
 ---
 
 **Versão:** 2.0  
-**Última Atualização:** 12/11/2025
+**Última Atualização:**  02/12/2025
