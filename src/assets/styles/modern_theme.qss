@@ -1,0 +1,197 @@
+/* Global Styles */
+QWidget {
+    background-color: #0f172a; /* Deep Blue Background */
+    color: #e2e8f0;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 14px;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: #1e293b;
+    width: 8px;
+    margin: 0px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical {
+    background: #475569;
+    min-height: 20px;
+    border-radius: 4px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+/* Tab Widget (Custom Segmented Control Look) */
+QTabWidget::pane {
+    border: none;
+    background: transparent;
+}
+QTabWidget::tab-bar {
+    alignment: center;
+}
+QTabBar::tab {
+    background: #1e293b;
+    color: #94a3b8;
+    padding: 12px 30px;
+    margin: 4px;
+    border-radius: 20px; /* Pill shape */
+    font-weight: bold;
+    border: 1px solid #334155;
+}
+QTabBar::tab:selected {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3b82f6, stop:1 #2563eb);
+    color: white;
+    border: none;
+    /* box-shadow not supported in QSS, using background color to simulate glow */
+}
+QTabBar::tab:hover:!selected {
+    background: #334155;
+    color: white;
+}
+
+/* Inputs */
+QLineEdit {
+    background-color: rgba(30, 41, 59, 0.7);
+    border: 1px solid #475569;
+    border-radius: 12px;
+    padding: 12px;
+    color: white;
+    selection-background-color: #3b82f6;
+}
+QLineEdit:focus {
+    border: 2px solid #3b82f6;
+    background-color: rgba(30, 41, 59, 0.9);
+}
+
+/* SpinBox */
+QSpinBox {
+    background-color: rgba(30, 41, 59, 0.7);
+    border: 1px solid #475569;
+    border-radius: 12px;
+    padding: 8px 12px;
+    color: white;
+    selection-background-color: #3b82f6;
+}
+QSpinBox:focus {
+    border: 2px solid #3b82f6;
+    background-color: rgba(30, 41, 59, 0.9);
+}
+QSpinBox::up-button, QSpinBox::down-button {
+    background: transparent;
+    border: none;
+    width: 20px;
+}
+QSpinBox::up-arrow, QSpinBox::down-arrow {
+    width: 0; 
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 4px solid #94a3b8; /* Up arrow color */
+}
+QSpinBox::down-arrow {
+    border-bottom: none;
+    border-top: 4px solid #94a3b8; /* Down arrow color */
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 24px;
+    font-weight: bold;
+    font-size: 14px;
+}
+QPushButton:hover {
+    background-color: #2563eb;
+}
+QPushButton:pressed {
+    background-color: #1d4ed8;
+}
+QPushButton:disabled {
+    background-color: #334155;
+    color: #64748b;
+}
+
+/* ComboBox */
+QComboBox {
+    background-color: rgba(30, 41, 59, 0.7);
+    border: 1px solid #475569;
+    border-radius: 12px;
+    padding: 8px 12px;
+    color: white;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 30px;
+}
+QComboBox::down-arrow {
+    image: none; /* Use unicode or custom icon if needed, or default arrow */
+    border-left: 2px solid #475569; /* Separator */
+    width: 0; 
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid #94a3b8;
+    margin-right: 10px;
+}
+QComboBox QAbstractItemView {
+    background-color: #1e293b;
+    border: 1px solid #475569;
+    selection-background-color: #3b82f6;
+    border-radius: 8px;
+    outline: none;
+}
+
+/* Cards / Containers */
+QFrame#GlassContainer {
+    background-color: rgba(30, 41, 59, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 24px;
+}
+
+/* Progress Bar */
+QProgressBar {
+    border: none;
+    background-color: #1e293b;
+    border-radius: 6px;
+    text-align: center;
+    color: white;
+    font-weight: bold;
+}
+QProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3b82f6, stop:1 #60a5fa);
+    border-radius: 6px;
+}
+
+/* Labels */
+QLabel {
+    background-color: transparent;
+    color: #e2e8f0;
+}
+QLabel#HeaderTitle {
+    font-size: 28px;
+    font-weight: bold;
+    color: white;
+}
+QLabel#SectionTitle {
+    font-size: 18px;
+    font-weight: bold;
+    color: #e2e8f0;
+}
+QLabel#SubTitle {
+    font-size: 14px;
+    color: #94a3b8;
+}
+
+/* Specific Widget Styles */
+/* Download Widget */
+QPushButton#ProcessButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3b82f6, stop:1 #2563eb);
+    font-size: 16px;
+    border-radius: 25px; /* Fully rounded pill */
+    height: 50px;
+}

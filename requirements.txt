@@ -1,0 +1,33 @@
+# Interface Gráfica
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0
+
+# Download de Vídeos
+yt-dlp>=2024.1.0
+pytube>=15.0.0
+
+# Processamento de Áudio/Vídeo
+openai-whisper>=20231117
+ffmpeg-python>=0.2.0
+moviepy>=1.0.3
+
+# Deep Learning
+# NOTA: PyTorch já deve estar instalado (pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu)
+# Não incluir torch/torchaudio aqui para evitar conflitos com versões CPU/GPU
+transformers>=4.35.0
+
+# Processamento de Imagem
+opencv-python>=4.8.0
+numpy>=1.24.0
+pillow>=10.0.0
+
+# Utilitários
+python-dotenv>=1.0.0
+requests>=2.31.0
+tqdm>=4.66.0
+pydantic>=2.5.0
+
+# Desenvolvimento
+pytest>=7.4.0
+black>=23.12.0
+flake8>=6.1.0
