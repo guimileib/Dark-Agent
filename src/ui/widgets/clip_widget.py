@@ -11,6 +11,11 @@ from PyQt6.QtGui import QColor, QPalette
 from pathlib import Path
 import logging
 
+try:
+    from config import settings
+except ImportError:
+    from ...config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -211,9 +216,18 @@ class ClipWidget(QWidget):
         self.combo_video.currentTextChanged.connect(self.on_video_selecionado)
         video_controls.addWidget(self.combo_video, 1)
         
-        self.btn_refresh = QPushButton("🔄")
+        self.btn_refresh = QPushButton()
         self.btn_refresh.setFixedSize(45, 45)
         self.btn_refresh.setToolTip("Recarregar vídeos")
+        
+        # Set refresh icon
+        refresh_icon_path = settings.assets_dir / "refresh.svg"
+        if refresh_icon_path.exists():
+            self.btn_refresh.setIcon(QIcon(str(refresh_icon_path)))
+            self.btn_refresh.setIconSize(self.btn_refresh.size() * 0.6)
+        else:
+            self.btn_refresh.setText("🔄")
+            
         self.btn_refresh.clicked.connect(self.carregar_videos)
         video_controls.addWidget(self.btn_refresh)
         
@@ -286,7 +300,9 @@ class ClipWidget(QWidget):
         self.check_todos.toggled.connect(self.on_check_todos_toggled)
         
         # Estilo personalizado para fundo transparente e checkmark
-        check_icon_path = Path("src/assets/check.svg").absolute().as_posix()
+        # Usando forward slashes explicitamente e as_posix()
+        check_icon_path = (settings.assets_dir / "check.svg").as_posix()
+        
         self.check_todos.setStyleSheet(f"""
             QCheckBox {{
                 background-color: transparent;
@@ -308,7 +324,7 @@ class ClipWidget(QWidget):
             QCheckBox::indicator:checked {{
                 background-color: #3b82f6;
                 border-color: #3b82f6;
-                image: url({check_icon_path});
+                image: url("{check_icon_path}");
             }}
         """)
         

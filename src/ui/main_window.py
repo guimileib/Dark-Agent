@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         self.setWindowTitle("DarkAgent Pro v2.0")
         self.resize(1200, 800) # Tamanho base razoável
-        self.showMaximized()   # Maximizar ao iniciar
+        self.center_window()   # Centralizar na tela
         
         # Set Icon
         icon_path = settings.assets_dir / "icon.png"
@@ -305,6 +305,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.status_label)
         
         central_widget.setLayout(layout)
+
+    def center_window(self):
+        """Centraliza a janela na tela"""
+        qr = self.frameGeometry()
+        cp = self.screen().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
     
     def gerar_previews_iniciais(self):
         """Gera previews dos estilos ao iniciar o aplicativo"""
