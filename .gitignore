@@ -75,3 +75,9 @@ config.local.json
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Arquivos de crash
+crash.txt   
+
+# Arquivos de assets
+src/assets/previews/

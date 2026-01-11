@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QFileDialog, QMessageBox, QCheckBox
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QThread
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtGui import QColor, QPalette, QIcon
 from pathlib import Path
 import logging
 
@@ -399,9 +399,17 @@ class ClipWidget(QWidget):
         """Habilita/desabilita spinbox de quantidade"""
         self.qtd_clips_spin.setEnabled(not checked)
         if checked:
-            self.qtd_clips_spin.setSpecialValueText("Todos")
+            # Texto transparente e fundo apagado
+            self.qtd_clips_spin.setStyleSheet("""
+                QSpinBox {
+                    color: transparent;
+                    background-color: rgba(30, 41, 59, 0.3);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                }
+            """)
         else:
-            self.qtd_clips_spin.setSpecialValueText("")
+            # Restaurar estilo padrão (ou remover override)
+            self.qtd_clips_spin.setStyleSheet("")
 
     def analisar_video(self):
         """Inicia análise inteligente do vídeo"""

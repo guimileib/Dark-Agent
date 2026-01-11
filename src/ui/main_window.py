@@ -293,6 +293,10 @@ class MainWindow(QMainWindow):
         self.btn_processar.clicked.connect(self.processar_video)
         layout.addWidget(self.btn_processar)
         
+        # Controle de visibilidade por aba
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+        self.btn_processar.setVisible(False)  # Download é a primeira aba
+        
         # Barra de progresso
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
@@ -335,6 +339,13 @@ class MainWindow(QMainWindow):
         else:
             logger.warning(f"Tema não encontrado em: {tema_path}")
     
+    
+    def on_tab_changed(self, index):
+        """Atualiza visibilidade de widgets conforme a aba selecionada"""
+        nome_aba = self.tab_widget.tabText(index)
+        # Mostrar botão de processar apenas na aba 'Legendas'
+        self.btn_processar.setVisible(nome_aba == "Legendas")
+
     def processar_video(self):
         """Inicia processamento do vídeo"""
         # Validar configuração
@@ -478,3 +489,25 @@ class MainWindow(QMainWindow):
             self.status_label.setText("")
             self.progress_bar.setVisible(False)
             self.progress_bar.setValue(0)
+
+    def closeEvent(self, event):
+        """Executado quando a janela é fechada"""
+        try:
+            # Limpar cache de previews
+            if hasattr(self, 'preview_renderer'):
+                logger.info("Limpando cache de previews ao fechar...")
+                self.preview_renderer.limpar_cache()
+            
+            # Parar threads se estiverem rodando
+            if self.thread_preview and self.thread_preview.isRunning():
+                self.thread_preview.terminate()
+                self.thread_preview.wait()
+                
+            if self.thread_processamento and self.thread_processamento.isRunning():
+                # Opcional: confirmar saída se estiver processando
+                pass
+                
+        except Exception as e:
+            logger.error(f"Erro ao fechar aplicação: {e}")
+        
+        event.accept()
