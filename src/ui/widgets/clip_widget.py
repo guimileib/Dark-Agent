@@ -611,7 +611,7 @@ class ClipWidget(QWidget):
             from pathlib import Path as PathLib
             
             # Criar pasta de saída
-            output_dir = PathLib("output/clips")
+            output_dir = settings.output_dir / "clips"
             output_dir.mkdir(parents=True, exist_ok=True)
             
             analyzer = ClipAnalyzer(self.video_path)

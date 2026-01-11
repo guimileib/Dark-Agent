@@ -80,4 +80,6 @@ htmlcov/
 crash.txt   
 
 # Arquivos de assets
+src/assets/
 src/assets/previews/
+
