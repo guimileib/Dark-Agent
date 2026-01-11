@@ -92,9 +92,23 @@ class DownloadWidget(QWidget):
         self.setLayout(layout)
     
     def escolher_pasta(self):
-        pasta = QFileDialog.getExistingDirectory(self, "Escolher Pasta de Saída")
+        # Import local para evitar ciclo
+        try:
+            from config import settings
+        except ImportError:
+            from src.config import settings
+
+        pasta = QFileDialog.getExistingDirectory(
+            self, 
+            "Escolher Pasta de Saída",
+            settings.last_open_dir
+        )
         if pasta:
             self.pasta_label.setText(pasta)
+            
+            # Salvar diretório atual
+            settings.last_open_dir = pasta
+            settings.save_config()
     
     def get_configuracao(self):
         return {

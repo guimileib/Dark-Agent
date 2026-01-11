@@ -428,6 +428,9 @@ class MainWindow(QMainWindow):
             self.status_label.setText("✅ Previews carregados")
             self.progress_bar.setVisible(False)
             self.progress_bar.setValue(0)
+            
+            # Limpar mensagem após 3 segundos
+            QTimer.singleShot(3000, lambda: self.status_label.setText(""))
         
         # Atualizar widget de legendas com os novos previews
         if hasattr(self, 'subtitle_widget'):

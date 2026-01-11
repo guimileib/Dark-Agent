@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QProgressBar, QListWidget, QListWidgetItem, QFrame,
     QComboBox, QFileDialog, QMessageBox, QCheckBox
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QThread
+from PyQt6.QtCore import pyqtSignal, Qt, QThread, QPropertyAnimation, QEasingCurve, QSize
 from PyQt6.QtGui import QColor, QPalette, QIcon
 from pathlib import Path
 import logging
@@ -187,9 +187,9 @@ class ClipWidget(QWidget):
         layout.setSpacing(20)
         
         # --- Container Superior: Seleção e Configuração ---
-        top_container = QFrame()
-        top_container.setObjectName("GlassContainer")
-        top_layout = QVBoxLayout(top_container)
+        self.top_container = QFrame()
+        self.top_container.setObjectName("GlassContainer")
+        top_layout = QVBoxLayout(self.top_container)
         top_layout.setContentsMargins(20, 20, 20, 20)
         top_layout.setSpacing(15)
         
@@ -345,7 +345,7 @@ class ClipWidget(QWidget):
         self.btn_analisar.setEnabled(False)
         top_layout.addWidget(self.btn_analisar)
         
-        layout.addWidget(top_container, 0) # Don't expand top container
+        layout.addWidget(self.top_container, 0) # Don't expand top container
         
         # --- Container Inferior: Resultados ---
         results_container = QFrame()
@@ -358,6 +358,32 @@ class ClipWidget(QWidget):
         results_title.setObjectName("SectionTitle")
         results_header.addWidget(results_title)
         results_header.addStretch()
+        
+        # Botão Ampliar/Recolher
+        self.results_expanded = False
+        self.original_top_height = 0
+        
+        self.btn_expand = QPushButton("🔎 Ampliar")
+        self.btn_expand.setCheckable(True)
+        self.btn_expand.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(59, 130, 246, 0.2);
+                border: 1px solid #3b82f6;
+                color: #3b82f6;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: rgba(59, 130, 246, 0.3);
+            }
+            QPushButton:checked {
+                background-color: #3b82f6;
+                color: white;
+            }
+        """)
+        self.btn_expand.clicked.connect(self.toggle_results_expansion)
+        results_header.addWidget(self.btn_expand)
         
         self.btn_baixar_todos = QPushButton("⬇️ Baixar Todos")
         self.btn_baixar_todos.clicked.connect(self.baixar_todos_clips)
@@ -395,6 +421,34 @@ class ClipWidget(QWidget):
         
         self.setLayout(layout)
     
+    def toggle_results_expansion(self, checked):
+        """Expande a seção de resultados oprimindo a seção superior"""
+        self.results_expanded = checked
+        
+        # Configurar animação
+        self.anim = QPropertyAnimation(self.top_container, b"maximumHeight")
+        self.anim.setDuration(400)
+        self.anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        
+        if self.results_expanded:
+            # Expandir resultados = Colapsar topo
+            self.original_top_height = self.top_container.height()
+            self.anim.setStartValue(self.original_top_height)
+            self.anim.setEndValue(0)
+            self.btn_expand.setText("🔽 Restaurar")
+        else:
+            # Restaurar topo
+            self.anim.setStartValue(self.top_container.height())
+            # Restaurar para altura original ou sizeHint se 0
+            target_h = self.original_top_height if self.original_top_height > 0 else self.top_container.sizeHint().height()
+            self.anim.setEndValue(target_h)
+            self.btn_expand.setText("🔎 Ampliar")
+            
+            # Ao terminar de restaurar, resetar para permitir redimensionamento
+            self.anim.finished.connect(lambda: self.top_container.setMaximumHeight(16777215)) # QWIDGETSIZE_MAX
+            
+        self.anim.start()
+
     def on_check_todos_toggled(self, checked):
         """Habilita/desabilita spinbox de quantidade"""
         self.qtd_clips_spin.setEnabled(not checked)
@@ -672,12 +726,17 @@ class ClipWidget(QWidget):
         arquivo, _ = QFileDialog.getOpenFileName(
             self,
             "Selecionar Vídeo",
-            str(Path.home()),
+            settings.last_open_dir,
             "Vídeos (*.mp4 *.avi *.mkv *.mov *.wmv *.flv *.webm *.m4v);;Todos os arquivos (*)"
         )
         
         if arquivo:
             video_path = Path(arquivo)
+            
+            # Salvar diretório atual
+            settings.last_open_dir = str(video_path.parent)
+            settings.save_config()
+            
             tamanho_mb = video_path.stat().st_size / (1024 * 1024)
             display_name = f"{video_path.name} ({tamanho_mb:.1f} MB) [Selecionado]"
             

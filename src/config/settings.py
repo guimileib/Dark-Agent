@@ -67,8 +67,12 @@ class Settings:
                     self.language = data.get("language", self.language)
                     self.whisper_model = data.get("whisper_model", self.whisper_model)
                     self.whisper_device = data.get("whisper_device", self.whisper_device)
+                    self.last_open_dir = data.get("last_open_dir", str(Path.home()))
             except Exception as e:
                 print(f"Erro ao carregar config: {e}")
+                self.last_open_dir = str(Path.home())
+        else:
+            self.last_open_dir = str(Path.home())
 
     def save_config(self):
         """Salva configurações no arquivo JSON"""
@@ -78,7 +82,8 @@ class Settings:
             "theme": self.theme,
             "language": self.language,
             "whisper_model": self.whisper_model,
-            "whisper_device": self.whisper_device
+            "whisper_device": self.whisper_device,
+            "last_open_dir": self.last_open_dir
         }
         try:
             with open(config_file, 'w', encoding='utf-8') as f:
