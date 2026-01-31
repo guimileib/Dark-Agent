@@ -10,14 +10,14 @@ from PyQt6.QtGui import QIcon
 
 try:
     from config.settings import settings
-    from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, SocialWidget, UploadWidget
+    from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget
     from core import (
         VideoDownloader, VideoValidator, Transcriber,
         SubtitleGenerator, VideoEditor, PreviewRenderer
     )
 except ImportError:
     from ..config.settings import settings
-    from .widgets import DownloadWidget, SubtitleWidget, ClipWidget, SocialWidget, UploadWidget
+    from .widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget
     from ..core import (
         VideoDownloader, VideoValidator, Transcriber,
         SubtitleGenerator, VideoEditor, PreviewRenderer
@@ -311,10 +311,6 @@ class MainWindow(QMainWindow):
         
         self.tab_widget.addTab(tab_legendas, "Legendas")
         
-        # Aba Social (Nova)
-        self.social_widget = SocialWidget()
-        self.tab_widget.addTab(self.social_widget, "Social")
-
         # Aba Upload
         self.upload_widget = UploadWidget()
         self.tab_widget.addTab(self.upload_widget, "Upload")

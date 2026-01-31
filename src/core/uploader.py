@@ -36,6 +36,23 @@ class TikTokUploader:
             service = EdgeService(EdgeChromiumDriverManager().install())
             driver = webdriver.Edge(service=service, options=options)
             
+        elif browser_name == "brave":
+            options = ChromeOptions()
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--start-maximized")
+            # Attempt to find Brave binary (Windows default)
+            brave_path = os.path.join(os.environ["ProgramFiles"], "BraveSoftware", "Brave-Browser", "Application", "brave.exe")
+            if not os.path.exists(brave_path):
+                 brave_path = os.path.join(os.environ["ProgramFiles(x86)"], "BraveSoftware", "Brave-Browser", "Application", "brave.exe")
+            
+            if os.path.exists(brave_path):
+                options.binary_location = brave_path
+            else:
+                self.logger.warning("Brave binary not found in default locations. Assuming it's in PATH or using Chrome as fallback.")
+            
+            service = ChromeService(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
+            
         else: # Default or chrome
             options = ChromeOptions()
             options.add_argument("--disable-blink-features=AutomationControlled")

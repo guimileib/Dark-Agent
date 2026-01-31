@@ -56,12 +56,7 @@ class Settings:
         self.load_config()
         
         # Inicializar Social Manager
-        try:
-            from core import SocialManager
-            self.social_manager = SocialManager(self.config_dir)
-        except Exception as e:
-            print(f"Erro ao inicializar SocialManager: {e}")
-            self.social_manager = None
+        self.social_manager = None
 
     def load_config(self):
         """Carrega configurações do arquivo JSON"""

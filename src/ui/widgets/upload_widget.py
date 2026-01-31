@@ -121,7 +121,7 @@ class UploadWidget(QWidget):
         
         browser_layout.addWidget(QLabel("Navegador para automação:"))
         self.combo_browser = QComboBox()
-        self.combo_browser.addItems(["chrome", "firefox", "edge"])
+        self.combo_browser.addItems(["chrome", "brave", "firefox", "edge"])
         browser_layout.addWidget(self.combo_browser)
         
         browser_group.setLayout(browser_layout)
