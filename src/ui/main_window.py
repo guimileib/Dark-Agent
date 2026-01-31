@@ -10,14 +10,14 @@ from PyQt6.QtGui import QIcon
 
 try:
     from config import settings
-    from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget
+    from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, SocialWidget
     from core import (
         VideoDownloader, VideoValidator, Transcriber,
         SubtitleGenerator, VideoEditor, PreviewRenderer
     )
 except ImportError:
     from ..config import settings
-    from .widgets import DownloadWidget, SubtitleWidget, ClipWidget
+    from .widgets import DownloadWidget, SubtitleWidget, ClipWidget, SocialWidget
     from ..core import (
         VideoDownloader, VideoValidator, Transcriber,
         SubtitleGenerator, VideoEditor, PreviewRenderer
@@ -151,6 +151,35 @@ class ProcessadorThread(QThread):
             self.concluido.emit(False, f"Erro: {str(e)}")
 
 
+class VideoOnlyThread(QThread):
+    """Thread apenas para download de vídeo"""
+    progresso = pyqtSignal(str, int)  # mensagem, percentual
+    concluido = pyqtSignal(bool, str)  # sucesso, mensagem
+    
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+    
+    def run(self):
+        try:
+            self.progresso.emit("Baixando vídeo...", 10)
+            downloader = VideoDownloader(self.config["pasta"])
+            sucesso, caminho, estrategia = downloader.download(
+                self.config["url"],
+                self.config["qualidade"]
+            )
+            
+            if sucesso:
+                self.progresso.emit("Concluído!", 100)
+                self.concluido.emit(True, f"Vídeo salvo em: {caminho}")
+            else:
+                self.concluido.emit(False, "Falha no download.")
+                
+        except Exception as e:
+            logger.error(f"Erro no download (video only): {e}")
+            self.concluido.emit(False, f"Erro: {str(e)}")
+
+
 class MainWindow(QMainWindow):
     """Janela principal do aplicativo"""
     
@@ -256,6 +285,7 @@ class MainWindow(QMainWindow):
         tab_download = QWidget()
         layout_download = QVBoxLayout(tab_download)
         self.download_widget = DownloadWidget()
+        self.download_widget.download_video_apenas.connect(self.baixar_video_apenas)
         layout_download.addWidget(self.download_widget)
         self.tab_widget.addTab(tab_download, "Download")
         
@@ -280,6 +310,10 @@ class MainWindow(QMainWindow):
         layout_legendas.addWidget(self.subtitle_widget)
         
         self.tab_widget.addTab(tab_legendas, "Legendas")
+        
+        # Aba Social (Nova)
+        self.social_widget = SocialWidget()
+        self.tab_widget.addTab(self.social_widget, "Social")
         
         # Gerar previews automaticamente ao iniciar
         self.gerar_previews_iniciais()
@@ -435,6 +469,34 @@ class MainWindow(QMainWindow):
         # Atualizar widget de legendas com os novos previews
         if hasattr(self, 'subtitle_widget'):
             self.subtitle_widget.recarregar_previews()
+    
+    def baixar_video_apenas(self, url, qualidade, pasta):
+        """Inicia download apenas do vídeo"""
+        if not url:
+            self.show_centered_message("Aviso", "Por favor, insira uma URL do YouTube!", QMessageBox.Icon.Warning)
+            return
+            
+        config = {
+            "url": url,
+            "qualidade": qualidade,
+            "pasta": pasta
+        }
+        
+        # Desabilitar UI
+        self.download_widget.btn_baixar.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        
+        # Iniciar thread
+        self.thread_processamento = VideoOnlyThread(config)
+        self.thread_processamento.progresso.connect(self.atualizar_progresso)
+        self.thread_processamento.concluido.connect(self.download_video_concluido)
+        self.thread_processamento.start()
+        
+    def download_video_concluido(self, sucesso, mensagem):
+        """Callback do download de vídeo apenas"""
+        self.download_widget.btn_baixar.setEnabled(True)
+        self.processamento_concluido(sucesso, mensagem)
     
     def processar_clip(self, info_clip: dict):
         """Processa um clip selecionado pelo usuário"""

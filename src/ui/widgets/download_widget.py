@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, 
     QPushButton, QComboBox, QLabel, QFileDialog, QFrame
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, Qt
 from pathlib import Path
 
 
@@ -12,6 +12,7 @@ class DownloadWidget(QWidget):
     """Widget para configurar e iniciar download"""
     
     download_iniciado = pyqtSignal(str, str, Path)  # url, qualidade, pasta
+    download_video_apenas = pyqtSignal(str, str, Path)  # url, qualidade, pasta (novo sіgnal)
     
     def __init__(self):
         super().__init__()
@@ -86,6 +87,14 @@ class DownloadWidget(QWidget):
         container_layout.addLayout(grid_config)
         container_layout.addStretch()
         
+        # Botão Apenas Baixar
+        self.btn_baixar = QPushButton("⬇ Baixar Vídeo (Sem Legendas)")
+        self.btn_baixar.setMinimumHeight(50)
+        self.btn_baixar.setStyleSheet("font-size: 14px; font-weight: bold; background-color: #3b82f6;")
+        self.btn_baixar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_baixar.clicked.connect(self.on_baixar_clicked)
+        container_layout.addWidget(self.btn_baixar)
+        
         layout.addWidget(container)
         layout.addStretch()
         
@@ -108,7 +117,21 @@ class DownloadWidget(QWidget):
             
             # Salvar diretório atual
             settings.last_open_dir = pasta
+            settings.last_open_dir = pasta
             settings.save_config()
+            
+    def on_baixar_clicked(self):
+        """Emite sinal para baixar apenas o vídeo"""
+        config = self.get_configuracao()
+        if config["url"]:
+            self.download_video_apenas.emit(
+                config["url"], 
+                config["qualidade"], 
+                config["pasta"]
+            )
+        else:
+             # Se vazio, emite igual para o MainWindow tratar (mostrar erro)
+            self.download_video_apenas.emit("", "", Path("."))
     
     def get_configuracao(self):
         return {
