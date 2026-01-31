@@ -89,18 +89,24 @@ class UploadWidget(QWidget):
         meta_group = QGroupBox("Detalhes do Vídeo")
         meta_layout = QVBoxLayout()
         
-        meta_layout.addWidget(QLabel("Legenda/Título:"))
-        self.txt_title = QTextEdit()
-        self.txt_title.setMaximumHeight(80)
+        meta_layout.addWidget(QLabel("Título:"))
+        self.txt_title_field = QLineEdit()
+        self.txt_title_field.setPlaceholderText("Título do vídeo (curto)")
+        
+        meta_layout.addWidget(QLabel("Legenda/Descrição:"))
+        self.txt_caption = QTextEdit()
+        self.txt_caption.setMaximumHeight(80)
         
         meta_layout.addWidget(QLabel("Hashtags (separadas por espaço):"))
         self.txt_hashtags = QLineEdit()
         self.txt_hashtags.setPlaceholderText("Ex: #fy #viral #darkagent")
         
-        meta_layout.addWidget(self.txt_title)
+        meta_layout.addWidget(self.txt_title_field)
+        meta_layout.addWidget(self.txt_caption)
         meta_layout.addWidget(self.txt_hashtags)
         meta_group.setLayout(meta_layout)
         layout.addWidget(meta_group)
+
 
         # --- Account Status ---
         account_group = QGroupBox("Conta TikTok")
@@ -184,16 +190,23 @@ class UploadWidget(QWidget):
 
     def start_upload(self):
         video = self.file_path.text()
-        title = self.txt_title.toPlainText()
+        title_text = self.txt_title_field.text() # Title
+        caption_text = self.txt_caption.toPlainText() # Description
         hashtags = self.txt_hashtags.text().replace("#", "").split()
         
         if not video or not Path(video).exists():
             QMessageBox.warning(self, "Erro", "Selecione um arquivo de vídeo válido!")
             return
             
-        if not title:
-            QMessageBox.warning(self, "Erro", "Insira um título/legenda!")
+        if not caption_text:
+            QMessageBox.warning(self, "Erro", "Insira uma legenda/descrição!")
             return
+            
+        # Initialize full title/description
+        # If both title and caption exist -> Title. Caption
+        final_description = caption_text
+        if title_text:
+             final_description = f"{title_text}. {caption_text}"
 
         if not Path("cookies.txt").exists():
             QMessageBox.warning(self, "Erro", "Conecte sua conta antes de enviar!")
@@ -202,11 +215,8 @@ class UploadWidget(QWidget):
         self.btn_upload.setEnabled(False)
         self.lbl_progress.setText("Iniciando upload (Browser oculto)...")
         
-        self.btn_upload.setEnabled(False)
-        self.lbl_progress.setText("Iniciando upload (Browser oculto)...")
-        
         browser = self.combo_browser.currentText()
-        self.upload_thread = UploaderThread(video, title, hashtags, browser=browser)
+        self.upload_thread = UploaderThread(video, final_description, hashtags, browser=browser)
         self.upload_thread.progresso.connect(self.update_status)
         self.upload_thread.concluido.connect(self.upload_finished)
         self.upload_thread.start()
