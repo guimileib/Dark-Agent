@@ -9,15 +9,15 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon
 
 try:
-    from config import settings
-    from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, SocialWidget
+    from config.settings import settings
+    from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, SocialWidget, UploadWidget
     from core import (
         VideoDownloader, VideoValidator, Transcriber,
         SubtitleGenerator, VideoEditor, PreviewRenderer
     )
 except ImportError:
-    from ..config import settings
-    from .widgets import DownloadWidget, SubtitleWidget, ClipWidget, SocialWidget
+    from ..config.settings import settings
+    from .widgets import DownloadWidget, SubtitleWidget, ClipWidget, SocialWidget, UploadWidget
     from ..core import (
         VideoDownloader, VideoValidator, Transcriber,
         SubtitleGenerator, VideoEditor, PreviewRenderer
@@ -314,6 +314,10 @@ class MainWindow(QMainWindow):
         # Aba Social (Nova)
         self.social_widget = SocialWidget()
         self.tab_widget.addTab(self.social_widget, "Social")
+
+        # Aba Upload
+        self.upload_widget = UploadWidget()
+        self.tab_widget.addTab(self.upload_widget, "Upload")
         
         # Gerar previews automaticamente ao iniciar
         self.gerar_previews_iniciais()
@@ -427,6 +431,12 @@ class MainWindow(QMainWindow):
             self.progress_bar.setVisible(False)
             
         self.progress_bar.setValue(0)
+    
+        # Auto-preencher aba de upload
+        if sucesso and hasattr(self, 'upload_widget'):
+            output_path = mensagem.split(": ")[1] if ": " in mensagem else ""
+            if output_path:
+                self.upload_widget.set_file(output_path)
     
     def iniciar_geracao_previews(self):
         """Inicia geração de previews em segundo plano"""

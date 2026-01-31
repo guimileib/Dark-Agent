@@ -66,9 +66,9 @@ class DownloadWidget(QWidget):
         pasta_input_layout.setSpacing(10)
         
         try:
-            from config import settings
+            from config.settings import settings
         except ImportError:
-            from src.config import settings
+            from src.config.settings import settings
             
         self.pasta_label = QLineEdit(str(settings.output_dir))
         self.pasta_label.setReadOnly(True)
@@ -103,9 +103,9 @@ class DownloadWidget(QWidget):
     def escolher_pasta(self):
         # Import local para evitar ciclo
         try:
-            from config import settings
+            from config.settings import settings
         except ImportError:
-            from src.config import settings
+            from src.config.settings import settings
 
         pasta = QFileDialog.getExistingDirectory(
             self, 

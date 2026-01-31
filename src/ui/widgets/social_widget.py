@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QThread
 from PyQt6.QtGui import QIcon
 
-from config import settings
+from config.settings import settings
 from core import SocialPlatform, SocialManager
 
 logger = logging.getLogger(__name__)

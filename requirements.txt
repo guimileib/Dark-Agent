@@ -31,3 +31,6 @@ pydantic>=2.5.0
 pytest>=7.4.0
 black>=23.12.0
 flake8>=6.1.0
+
+# Automação
+tiktok-uploader>=0.0.1

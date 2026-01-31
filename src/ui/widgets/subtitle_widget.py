@@ -11,9 +11,9 @@ from pathlib import Path
 import logging
 
 try:
-    from config import settings
+    from config.settings import settings
 except ImportError:
-    from ...config import settings
+    from ...config.settings import settings
 
 logger = logging.getLogger(__name__)
 

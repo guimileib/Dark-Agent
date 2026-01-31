@@ -8,10 +8,10 @@ import tempfile
 
 try:
     from models import EstiloLegenda
-    from config import settings
+    from config.settings import settings
 except ImportError:
     from ..models import EstiloLegenda
-    from ..config import settings
+    from ..config.settings import settings
 
 logger = logging.getLogger(__name__)
 
