@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QSplashScreen, QProgressBar, QVBoxLayout, QLabel, 
-    QWidget, QGraphicsDropShadowEffect, QApplication
+    QWidget, QGraphicsDropShadowEffect, QApplication, QPushButton, QHBoxLayout
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap, QColor, QFont
@@ -23,7 +23,34 @@ class SplashScreen(QSplashScreen):
         # Main Layout
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(40, 40, 40, 40)
+        self.layout.setContentsMargins(40, 40, 40, 40)
         self.layout.setSpacing(20)
+        
+        # Top Bar (Minimize Button)
+        top_bar = QHBoxLayout()
+        top_bar.addStretch()
+        
+        self.btn_minimize = QPushButton("-")
+        self.btn_minimize.setFixedSize(30, 30)
+        self.btn_minimize.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_minimize.clicked.connect(self.showMinimized)
+        self.btn_minimize.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #94a3b8;
+                border: none;
+                font-size: 20px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                color: white;
+                background-color: rgba(255, 255, 255, 0.1);
+                border-radius: 15px;
+            }
+        """)
+        top_bar.addWidget(self.btn_minimize)
+        
+        self.layout.addLayout(top_bar)
         
         # Logo / Title Area
         self.logo_label = QLabel("DarkAgent Pro")

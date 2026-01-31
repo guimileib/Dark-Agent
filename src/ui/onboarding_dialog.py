@@ -23,8 +23,14 @@ class OnboardingDialog(QDialog):
         self.setFixedSize(800, 600)
         self.setModal(True)
         
-        # Remover botão de ajuda (?) da barra de título
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        # Adicionar botões de minimizar e fechar explicitamente
+        self.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.WindowTitleHint |
+            Qt.WindowType.CustomizeWindowHint |
+            Qt.WindowType.WindowMinimizeButtonHint |
+            Qt.WindowType.WindowCloseButtonHint
+        )
         
         self.init_ui()
         self.aplicar_estilo()

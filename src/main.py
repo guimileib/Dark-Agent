@@ -153,29 +153,25 @@ def main():
         splash = SplashScreen()
         splash.show()
         
-        # Simulate loading steps
+        
+        # Simulate loading steps (faster)
         splash.update_progress(10, "Loading configuration...")
         app.processEvents()
-        time.sleep(0.5) # Simulate work
         
         splash.update_progress(30, "Initializing AI models...")
         app.processEvents()
-        time.sleep(0.5)
         
         splash.update_progress(60, "Loading UI components...")
         app.processEvents()
-        time.sleep(0.5)
         
         # Create Main Window (this might take a bit if it loads heavy stuff)
         window = MainWindow()
         
         splash.update_progress(90, "Starting application...")
         app.processEvents()
-        time.sleep(0.5)
         
         splash.update_progress(100, "Ready!")
         app.processEvents()
-        time.sleep(0.2)
         
         window.show()
         splash.finish(window)
