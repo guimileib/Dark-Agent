@@ -25,6 +25,20 @@ class VideoDownloader:
             self._estrategia_6_pytube_progressive,
             self._estrategia_7_ffmpeg_merge
         ]
+
+    def _priorizar_estrategias(self, url: str):
+        """Reordena estratégias baseado na URL"""
+        if "youtube.com" not in url and "youtu.be" not in url:
+            # Para não-YouTube, priorizar Web e Bypass
+            self.estrategias = [
+                self._estrategia_3_ytdlp_web,
+                self._estrategia_4_ytdlp_bypass,
+                self._estrategia_7_ffmpeg_merge,
+                self._estrategia_1_ytdlp_android,
+                self._estrategia_2_ytdlp_ios,
+                self._estrategia_5_ytdlp_merge_manual,
+                self._estrategia_6_pytube_progressive
+            ]
     
     def download(self, url: str, qualidade: str = "720p", timeout: int = 300) -> Tuple[bool, Optional[Path], str]:
         """
@@ -34,6 +48,8 @@ class VideoDownloader:
             (sucesso, caminho_arquivo, estrategia_usada)
         """
         logger.info(f"Iniciando download: {url} - Qualidade: {qualidade}")
+        
+        self._priorizar_estrategias(url)
         
         for i, estrategia in enumerate(self.estrategias, 1):
             estrategia_nome = estrategia.__name__
