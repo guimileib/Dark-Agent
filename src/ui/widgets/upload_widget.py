@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QLineEdit, QTextEdit, QPushButton, QFileDialog, 
-    QGroupBox, QMessageBox, QProgressBar, QComboBox
+    QGroupBox, QMessageBox, QProgressBar, QComboBox,
+    QListWidget, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
@@ -72,16 +73,29 @@ class UploadWidget(QWidget):
         layout = QVBoxLayout(self)
         
         # --- File Selection ---
-        file_group = QGroupBox("Arquivo de Vídeo")
-        file_layout = QHBoxLayout()
+        file_group = QGroupBox("Arquivos de Vídeo")
+        file_layout = QVBoxLayout()
         
-        self.file_path = QLineEdit()
-        self.file_path.setPlaceholderText("Selecione o vídeo para upload...")
-        self.btn_browse = QPushButton("Procurar...")
-        self.btn_browse.clicked.connect(self.browse_file)
+        self.file_list = QListWidget()
+        self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.file_list.setMinimumHeight(100)
         
-        file_layout.addWidget(self.file_path)
-        file_layout.addWidget(self.btn_browse)
+        btn_layout = QHBoxLayout()
+        self.btn_add = QPushButton("Adicionar Vídeos...")
+        self.btn_add.clicked.connect(self.browse_files)
+        
+        self.btn_remove = QPushButton("Remover Selecionados")
+        self.btn_remove.clicked.connect(self.remove_selected_files)
+        
+        self.btn_clear = QPushButton("Limpar Lista")
+        self.btn_clear.clicked.connect(self.clear_files)
+        
+        btn_layout.addWidget(self.btn_add)
+        btn_layout.addWidget(self.btn_remove)
+        btn_layout.addWidget(self.btn_clear)
+        
+        file_layout.addWidget(self.file_list)
+        file_layout.addLayout(btn_layout)
         file_group.setLayout(file_layout)
         layout.addWidget(file_group)
 
@@ -149,12 +163,25 @@ class UploadWidget(QWidget):
 
         layout.addStretch()
 
-    def browse_file(self):
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "Selecionar Vídeo", "", "Video Files (*.mp4 *.mov *.avi)"
+    def browse_files(self):
+        filenames, _ = QFileDialog.getOpenFileNames(
+            self, "Selecionar Vídeos", "", "Video Files (*.mp4 *.mov *.avi)"
         )
-        if filename:
-            self.file_path.setText(filename)
+        if filenames:
+            self.file_list.addItems(filenames)
+            
+    def remove_selected_files(self):
+        for item in self.file_list.selectedItems():
+            self.file_list.takeItem(self.file_list.row(item))
+            
+    def clear_files(self):
+        self.file_list.clear()
+        
+    def get_selected_files(self):
+        files = []
+        for i in range(self.file_list.count()):
+            files.append(self.file_list.item(i).text())
+        return files
 
     def check_login_status(self):
         if Path("cookies.txt").exists():

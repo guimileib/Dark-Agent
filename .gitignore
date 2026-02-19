@@ -83,3 +83,8 @@ crash.txt
 src/assets/
 src/assets/previews/
 
+# Arquivos de testes
+tests/
+
+# Arquivos de documentação
+docs/
