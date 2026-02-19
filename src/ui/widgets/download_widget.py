@@ -31,7 +31,7 @@ class DownloadWidget(QWidget):
         
         # URL Input
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("📺 Cole o link do vídeo aqui...")
+        self.url_input.setPlaceholderText("📺 Cole o link do vídeo aqui (YouTube, South Park, TikTok, etc)...")
         self.url_input.setMinimumHeight(50)
         # Styling handled by QSS
         container_layout.addWidget(self.url_input)

@@ -61,11 +61,23 @@ class VideoDownloader:
     def _run_ytdlp(self, cmd: list, timeout: int) -> Optional[Path]:
         """Helper para rodar yt-dlp com timeout e tratamento de erro"""
         try:
-            # Adicionar flags para evitar hangs
-            cmd.extend(["--socket-timeout", "30"])
+            # Use sys.executable to ensure we use the same python environment
+            import sys
+            base_cmd = [sys.executable, "-m", "yt_dlp"]
+            
+            # Remove "yt-dlp" from the beginning if present, as checking strategies might include it
+            if cmd[0] == "yt-dlp":
+                cmd = cmd[1:]
+                
+            full_cmd = base_cmd + cmd
+            
+            # Adicionar flags para evitar hangs e ignorar erros de certificado
+            full_cmd.extend(["--socket-timeout", "30", "--no-check-certificate"])
+            
+            logger.debug(f"Executando: {' '.join(full_cmd)}")
             
             resultado = subprocess.run(
-                cmd, 
+                full_cmd, 
                 capture_output=True, 
                 text=True, 
                 timeout=timeout,
@@ -89,13 +101,13 @@ class VideoDownloader:
         return None
 
     def _estrategia_1_ytdlp_android(self, url: str, qualidade: str, timeout: int) -> Optional[Path]:
-        """Estratégia 1: yt-dlp com user-agent Android"""
+        """Estratégia 1: yt-dlp com user-agent Android (Bom para YouTube)"""
         output_path = self.output_dir / "%(title)s.%(ext)s"
         
         cmd = [
             "yt-dlp",
             "--user-agent", "com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip",
-            "-f", f"bestvideo[height<={qualidade[:-1]}]+bestaudio/best",
+            "-f", f"bestvideo[height<={qualidade[:-1]}]+bestaudio/best/best",
             "--merge-output-format", "mp4",
             "-o", str(output_path),
             url
@@ -103,13 +115,13 @@ class VideoDownloader:
         return self._run_ytdlp(cmd, timeout)
     
     def _estrategia_2_ytdlp_ios(self, url: str, qualidade: str, timeout: int) -> Optional[Path]:
-        """Estratégia 2: yt-dlp com user-agent iOS"""
+        """Estratégia 2: yt-dlp com user-agent iOS (Bom para YouTube)"""
         output_path = self.output_dir / "%(title)s.%(ext)s"
         
         cmd = [
             "yt-dlp",
             "--user-agent", "com.google.ios.youtube/17.36.4 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)",
-            "-f", f"bestvideo[height<={qualidade[:-1]}]+bestaudio/best",
+            "-f", f"bestvideo[height<={qualidade[:-1]}]+bestaudio/best/best",
             "--merge-output-format", "mp4",
             "-o", str(output_path),
             url
@@ -117,12 +129,12 @@ class VideoDownloader:
         return self._run_ytdlp(cmd, timeout)
     
     def _estrategia_3_ytdlp_web(self, url: str, qualidade: str, timeout: int) -> Optional[Path]:
-        """Estratégia 3: yt-dlp com user-agent Web padrão"""
+        """Estratégia 3: yt-dlp genérico (Bom para sites gerais)"""
         output_path = self.output_dir / "%(title)s.%(ext)s"
         
         cmd = [
             "yt-dlp",
-            "-f", f"bestvideo[height<={qualidade[:-1]}]+bestaudio/best",
+            "-f", f"bestvideo[height<={qualidade[:-1]}]+bestaudio/best/best",
             "--merge-output-format", "mp4",
             "-o", str(output_path),
             url
@@ -130,14 +142,13 @@ class VideoDownloader:
         return self._run_ytdlp(cmd, timeout)
     
     def _estrategia_4_ytdlp_bypass(self, url: str, qualidade: str, timeout: int) -> Optional[Path]:
-        """Estratégia 4: yt-dlp com bypass de restrições"""
+        """Estratégia 4: yt-dlp com bypass de restrições geográficas"""
         output_path = self.output_dir / "%(title)s.%(ext)s"
         
         cmd = [
             "yt-dlp",
-            "--no-check-certificate",
             "--geo-bypass",
-            "-f", f"bestvideo[height<={qualidade[:-1]}]+bestaudio/best",
+            "-f", f"bestvideo[height<={qualidade[:-1]}]+bestaudio/best/best",
             "--merge-output-format", "mp4",
             "-o", str(output_path),
             url

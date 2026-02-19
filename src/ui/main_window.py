@@ -386,7 +386,7 @@ class MainWindow(QMainWindow):
         config = self.download_widget.get_configuracao()
         
         if not config["url"]:
-            self.show_centered_message("Aviso", "Por favor, insira uma URL do YouTube!", QMessageBox.Icon.Warning)
+            self.show_centered_message("Aviso", "Por favor, insira uma URL válida!", QMessageBox.Icon.Warning)
             return
         
         estilo = self.subtitle_widget.get_estilo_atual()
@@ -479,7 +479,7 @@ class MainWindow(QMainWindow):
     def baixar_video_apenas(self, url, qualidade, pasta):
         """Inicia download apenas do vídeo"""
         if not url:
-            self.show_centered_message("Aviso", "Por favor, insira uma URL do YouTube!", QMessageBox.Icon.Warning)
+            self.show_centered_message("Aviso", "Por favor, insira uma URL válida!", QMessageBox.Icon.Warning)
             return
             
         config = {
