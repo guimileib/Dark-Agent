@@ -1,7 +1,7 @@
 """Widget principal de download"""
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPlainTextEdit,
     QPushButton, QComboBox, QLabel, QFileDialog, QFrame
 )
 from PyQt6.QtCore import pyqtSignal, Qt
@@ -11,8 +11,8 @@ from pathlib import Path
 class DownloadWidget(QWidget):
     """Widget para configurar e iniciar download"""
     
-    download_iniciado = pyqtSignal(str, str, Path)  # url, qualidade, pasta
-    download_video_apenas = pyqtSignal(str, str, Path)  # url, qualidade, pasta (novo sіgnal)
+    download_iniciado = pyqtSignal(list, str, Path)  # lista_urls, qualidade, pasta
+    download_video_apenas = pyqtSignal(list, str, Path)  # lista_urls, qualidade, pasta (novo sіgnal)
     
     def __init__(self):
         super().__init__()
@@ -29,10 +29,14 @@ class DownloadWidget(QWidget):
         container_layout.setSpacing(20)
         container_layout.setContentsMargins(30, 30, 30, 30)
         
-        # URL Input
-        self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("📺 Cole o link do vídeo aqui (YouTube, South Park, TikTok, etc)...")
-        self.url_input.setMinimumHeight(50)
+        # URL Input (Multi-line for batch)
+        url_label = QLabel("URLs do Vídeo (Um por linha)")
+        url_label.setObjectName("SectionTitle")
+        container_layout.addWidget(url_label)
+
+        self.url_input = QPlainTextEdit()
+        self.url_input.setPlaceholderText("📺 Cole os links dos vídeos aqui (YouTube, South Park, TikTok, etc)...\nUm link por linha.")
+        self.url_input.setMinimumHeight(100)
         # Styling handled by QSS
         container_layout.addWidget(self.url_input)
         
@@ -123,19 +127,23 @@ class DownloadWidget(QWidget):
     def on_baixar_clicked(self):
         """Emite sinal para baixar apenas o vídeo"""
         config = self.get_configuracao()
-        if config["url"]:
+        if config["urls"]:
             self.download_video_apenas.emit(
-                config["url"], 
+                config["urls"], 
                 config["qualidade"], 
                 config["pasta"]
             )
         else:
-             # Se vazio, emite igual para o MainWindow tratar (mostrar erro)
-            self.download_video_apenas.emit("", "", Path("."))
+             # Se vazio, emite lista vazia
+            self.download_video_apenas.emit([], "", Path("."))
     
     def get_configuracao(self):
+        # Quebrar texto em linhas e filtrar vazias
+        raw_text = self.url_input.toPlainText()
+        urls = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        
         return {
-            "url": self.url_input.text().strip(),
+            "urls": urls,
             "qualidade": self.qualidade_combo.currentText(),
             "pasta": Path(self.pasta_label.text())
         }

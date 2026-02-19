@@ -84,11 +84,27 @@ class VideoDownloader:
             # Remove "yt-dlp" from the beginning if present, as checking strategies might include it
             if cmd[0] == "yt-dlp":
                 cmd = cmd[1:]
-                
+            
+            # --- COOKIES SUPPORT ---
+            # Tentar importar settings aqui para evitar import circular no topo
+            try:
+                from config.settings import settings
+                if settings.cookies_file.exists():
+                     base_cmd.extend(["--cookies", str(settings.cookies_file)])
+                else:
+                    # Fallback para cookies do navegador se arquivo não existir
+                    # Tenta Chrome primeiro, depois Firefox
+                    base_cmd.extend(["--cookies-from-browser", "chrome"])
+            except ImportError:
+                # Se falhar import, tenta caminho relativo hardcoded
+                cookies_path = Path(__file__).parent.parent / "cookies.txt"
+                if cookies_path.exists():
+                    base_cmd.extend(["--cookies", str(cookies_path)])
+
             full_cmd = base_cmd + cmd
             
             # Adicionar flags para evitar hangs e ignorar erros de certificado
-            full_cmd.extend(["--socket-timeout", "30", "--no-check-certificate"])
+            full_cmd.extend(["--socket-timeout", "30", "--no-check-certificate", "--verbose"])
             
             logger.debug(f"Executando: {' '.join(full_cmd)}")
             
@@ -107,9 +123,12 @@ class VideoDownloader:
                 if arquivos:
                     return max(arquivos, key=lambda p: p.stat().st_mtime)
             else:
-                logger.debug(f"Erro yt-dlp: {resultado.stderr}")
+                logger.error(f"Erro yt-dlp (Exit Code {resultado.returncode}):")
+                logger.error(f"STDOUT: {resultado.stdout}")
+                logger.error(f"STDERR: {resultado.stderr}")
                 
         except subprocess.TimeoutExpired:
+            logger.error(f"Timeout no yt-dlp após {timeout}s")
             raise
         except Exception as e:
             logger.error(f"Erro ao executar yt-dlp: {e}")

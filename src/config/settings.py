@@ -23,6 +23,9 @@ class Settings:
         self.cache_dir = self.base_dir / "src" / "cache"
         self.models_dir = self.base_dir / "src" / "models"
         
+        # Arquivo de cookies
+        self.cookies_file = self.base_dir / "src" / "cookies.txt"
+        
         # Criar diretórios se não existirem
         self.output_dir.mkdir(exist_ok=True)
         self.cache_dir.mkdir(exist_ok=True)
