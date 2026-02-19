@@ -79,7 +79,7 @@ class PreviewGeneratorThread(QThread):
 
 class ProcessadorThread(QThread):
     progresso = pyqtSignal(str, int)  # mensagem, percentual
-    concluido = pyqtSignal(bool, str)  # sucesso, mensagem
+    concluido = pyqtSignal(dict)  # resultados {sucesso: [], falha: []}
     
     def __init__(self, config, estilo):
         super().__init__()
@@ -87,97 +87,133 @@ class ProcessadorThread(QThread):
         self.estilo = estilo
     
     def run(self):
+        urls = self.config.get("urls", [])
+        total_videos = len(urls)
+        resultados = {"sucesso": [], "falha": []}
+        
         try:
-            # Download
-            self.progresso.emit("Baixando vídeo...", 10)
-            downloader = VideoDownloader(self.config["pasta"])
-            sucesso, caminho_video, estrategia = downloader.download(
-                self.config["url"],
-                self.config["qualidade"]
-            )
-            
-            if not sucesso:
-                self.concluido.emit(False, "Falha no download")
-                return
-            
-            # Validar
-            self.progresso.emit("Validando vídeo...", 20)
-            valido, checks = VideoValidator.validar_video_completo(caminho_video)
-            
-            if not valido:
-                self.concluido.emit(False, f"Vídeo inválido: {checks}")
-                return
-            
-            # Extrair áudio
-            self.progresso.emit("Extraindo áudio...", 30)
-            transcriber = Transcriber(
-                modelo=settings.whisper_model,
-                idioma=settings.whisper_language  # None = auto-detect
-            )
-            audio_path = caminho_video.parent / "audio_temp.wav"
-            
-            if not transcriber.extrair_audio_de_video(caminho_video, audio_path):
-                self.concluido.emit(False, "Falha ao extrair áudio")
-                return
-            
-            # Transcrever
-            self.progresso.emit("Transcrevendo com IA...", 50)
-            transcricao = transcriber.transcrever(audio_path)
-            
-            # Gerar legendas
-            self.progresso.emit("Gerando legendas...", 70)
-            subtitle_gen = SubtitleGenerator()
-            ass_path = caminho_video.parent / "legendas.ass"
-            
-            subtitle_gen.gerar_ass(transcricao, self.estilo, ass_path)
-            
-            # Queimar legendas
-            self.progresso.emit("Queimando legendas no vídeo...", 85)
-            editor = VideoEditor()
-            output_path = caminho_video.parent / f"{caminho_video.stem}_final.mp4"
-            
-            if not editor.queimar_legendas(caminho_video, ass_path, output_path):
-                self.concluido.emit(False, "Falha ao queimar legendas")
-                return
-            
-            # Limpar temporários
-            audio_path.unlink(missing_ok=True)
-            
-            self.progresso.emit("Concluído!", 100)
-            self.concluido.emit(True, f"Vídeo salvo em: {output_path}")
+            for i, url in enumerate(urls):
+                if not url.strip():
+                    continue
+                
+                prefixo = f"[{i+1}/{total_videos}] "
+                logger.info(f"Processando: {url}")
+                
+                try:
+                    # Download
+                    self.progresso.emit(f"{prefixo}Baixando vídeo...", 10)
+                    downloader = VideoDownloader(self.config["pasta"])
+                    sucesso, caminho_video, estrategia = downloader.download(
+                        url,
+                        self.config["qualidade"]
+                    )
+                    
+                    if not sucesso:
+                        resultados["falha"].append((url, "Falha no download"))
+                        continue
+                    
+                    # Validar
+                    self.progresso.emit(f"{prefixo}Validando vídeo...", 20)
+                    valido, checks = VideoValidator.validar_video_completo(caminho_video)
+                    
+                    if not valido:
+                        resultados["falha"].append((url, f"Vídeo inválido: {checks}"))
+                        continue
+                    
+                    # Extrair áudio
+                    self.progresso.emit(f"{prefixo}Extraindo áudio...", 30)
+                    transcriber = Transcriber(
+                        modelo=settings.whisper_model,
+                        idioma=settings.whisper_language  # None = auto-detect
+                    )
+                    audio_path = caminho_video.parent / f"audio_temp_{i}.wav"
+                    
+                    if not transcriber.extrair_audio_de_video(caminho_video, audio_path):
+                        resultados["falha"].append((url, "Falha ao extrair áudio"))
+                        continue
+                    
+                    # Transcrever
+                    self.progresso.emit(f"{prefixo}Transcrevendo com IA...", 50)
+                    transcricao = transcriber.transcrever(audio_path)
+                    
+                    # Gerar legendas
+                    self.progresso.emit(f"{prefixo}Gerando legendas...", 70)
+                    subtitle_gen = SubtitleGenerator()
+                    ass_path = caminho_video.parent / f"{caminho_video.stem}.ass"
+                    
+                    subtitle_gen.gerar_ass(transcricao, self.estilo, ass_path)
+                    
+                    # Queimar legendas
+                    self.progresso.emit(f"{prefixo}Queimando legendas...", 85)
+                    editor = VideoEditor()
+                    output_path = caminho_video.parent / f"{caminho_video.stem}_final.mp4"
+                    
+                    if not editor.queimar_legendas(caminho_video, ass_path, output_path):
+                        resultados["falha"].append((url, "Falha ao queimar legendas"))
+                        continue
+                    
+                    # Limpar temporários
+                    audio_path.unlink(missing_ok=True)
+                    
+                    resultados["sucesso"].append((url, output_path))
+                    
+                except Exception as e:
+                    logger.error(f"Erro ao processar {url}: {e}")
+                    resultados["falha"].append((url, str(e)))
+                    
+            self.progresso.emit("Processamento concluído!", 100)
+            self.concluido.emit(resultados)
             
         except Exception as e:
-            logger.error(f"Erro no processamento: {e}")
-            self.concluido.emit(False, f"Erro: {str(e)}")
+            logger.error(f"Erro fatal no processamento: {e}")
+            self.concluido.emit(resultados)
 
 
-class VideoOnlyThread(QThread):
-    """Thread apenas para download de vídeo"""
+class BatchDownloadThread(QThread):
+    """Thread para download de múltiplos vídeos"""
     progresso = pyqtSignal(str, int)  # mensagem, percentual
-    concluido = pyqtSignal(bool, str)  # sucesso, mensagem
+    concluido = pyqtSignal(dict)  # resultados {sucesso: [], falha: []}
     
     def __init__(self, config):
         super().__init__()
         self.config = config
     
     def run(self):
+        urls = self.config.get("urls", [])
+        total = len(urls)
+        resultados = {"sucesso": [], "falha": []}
+        
         try:
-            self.progresso.emit("Baixando vídeo...", 10)
-            downloader = VideoDownloader(self.config["pasta"])
-            sucesso, caminho, estrategia = downloader.download(
-                self.config["url"],
-                self.config["qualidade"]
-            )
+            for i, url in enumerate(urls):
+                if not url.strip():
+                    continue
+                    
+                self.progresso.emit(f"Baixando {i+1}/{total}: {url}...", int((i / total) * 100))
+                
+                downloader = VideoDownloader(self.config["pasta"])
+                try:
+                    sucesso, caminho, estrategia = downloader.download(
+                        url,
+                        self.config["qualidade"]
+                    )
+                    
+                    if sucesso:
+                        resultados["sucesso"].append((url, caminho))
+                        logger.info(f"Download sucesso: {url}")
+                    else:
+                        resultados["falha"].append((url, "Todas as estratégias falharam"))
+                        logger.warning(f"Download falha: {url}")
+                        
+                except Exception as e:
+                    resultados["falha"].append((url, str(e)))
+                    logger.error(f"Erro no download de {url}: {e}")
             
-            if sucesso:
-                self.progresso.emit("Concluído!", 100)
-                self.concluido.emit(True, f"Vídeo salvo em: {caminho}")
-            else:
-                self.concluido.emit(False, "Falha no download.")
+            self.progresso.emit("Finalizando...", 100)
+            self.concluido.emit(resultados)
                 
         except Exception as e:
-            logger.error(f"Erro no download (video only): {e}")
-            self.concluido.emit(False, f"Erro: {str(e)}")
+            logger.error(f"Erro na thread de batch: {e}")
+            self.concluido.emit(resultados)
 
 
 class MainWindow(QMainWindow):
@@ -381,12 +417,12 @@ class MainWindow(QMainWindow):
         self.btn_processar.setVisible(nome_aba == "Legendas")
 
     def processar_video(self):
-        """Inicia processamento do vídeo"""
+        """Inicia processamento do vídeo (Batch)"""
         # Validar configuração
         config = self.download_widget.get_configuracao()
         
-        if not config["url"]:
-            self.show_centered_message("Aviso", "Por favor, insira uma URL válida!", QMessageBox.Icon.Warning)
+        if not config["urls"]:
+            self.show_centered_message("Aviso", "Por favor, insira pelo menos uma URL válida!", QMessageBox.Icon.Warning)
             return
         
         estilo = self.subtitle_widget.get_estilo_atual()
@@ -411,14 +447,25 @@ class MainWindow(QMainWindow):
         self.status_label.setText(mensagem)
         self.progress_bar.setValue(percentual)
     
-    def processamento_concluido(self, sucesso: bool, mensagem: str):
-        """Callback quando processamento termina"""
+    def processamento_concluido(self, resultados):
+        """Callback quando processamento termina (Batch)"""
         self.btn_processar.setEnabled(True)
         
-        if sucesso:
-            self.show_centered_message("Sucesso! 🎉", mensagem, QMessageBox.Icon.Information)
-        else:
-            self.show_centered_message("Erro ❌", mensagem, QMessageBox.Icon.Critical)
+        sucessos = resultados.get("sucesso", [])
+        falhas = resultados.get("falha", [])
+        
+        msg = f"Processamento concluído!\n\n✅ Sucesso: {len(sucessos)}\n❌ Falhas: {len(falhas)}"
+        
+        if falhas:
+            msg += "\n\nErros:\n"
+            for url, erro in falhas:
+                msg += f"• {url}: {erro}\n"
+        
+        icon = QMessageBox.Icon.Information if not falhas else QMessageBox.Icon.Warning
+        
+        # Mostrar relatório se houver processamentos
+        if sucessos or falhas:
+            self.show_centered_message("Relatório de Processamento", msg, icon)
         
         self.status_label.setText("")
         
@@ -428,9 +475,9 @@ class MainWindow(QMainWindow):
             
         self.progress_bar.setValue(0)
     
-        # Auto-preencher aba de upload
-        if sucesso and hasattr(self, 'upload_widget'):
-            output_path = mensagem.split(": ")[1] if ": " in mensagem else ""
+        # Auto-preencher aba de upload com o primeiro sucesso
+        if sucessos and hasattr(self, 'upload_widget'):
+            output_path = str(sucessos[0][1])
             if output_path:
                 self.upload_widget.set_file(output_path)
     
@@ -476,14 +523,14 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'subtitle_widget'):
             self.subtitle_widget.recarregar_previews()
     
-    def baixar_video_apenas(self, url, qualidade, pasta):
-        """Inicia download apenas do vídeo"""
-        if not url:
-            self.show_centered_message("Aviso", "Por favor, insira uma URL válida!", QMessageBox.Icon.Warning)
+    def baixar_video_apenas(self, urls, qualidade, pasta):
+        """Inicia download apenas do vídeo (Batch)"""
+        if not urls:
+            self.show_centered_message("Aviso", "Por favor, insira pelo menos uma URL válida!", QMessageBox.Icon.Warning)
             return
             
         config = {
-            "url": url,
+            "urls": urls,
             "qualidade": qualidade,
             "pasta": pasta
         }
@@ -493,16 +540,36 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         
-        # Iniciar thread
-        self.thread_processamento = VideoOnlyThread(config)
+        # Iniciar thread (Batch)
+        self.thread_processamento = BatchDownloadThread(config)
         self.thread_processamento.progresso.connect(self.atualizar_progresso)
         self.thread_processamento.concluido.connect(self.download_video_concluido)
         self.thread_processamento.start()
         
-    def download_video_concluido(self, sucesso, mensagem):
-        """Callback do download de vídeo apenas"""
+    def download_video_concluido(self, resultados):
+        """Callback do download de vídeo apenas (Batch)"""
         self.download_widget.btn_baixar.setEnabled(True)
-        self.processamento_concluido(sucesso, mensagem)
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setValue(0)
+        self.status_label.setText("")
+        
+        sucessos = resultados.get("sucesso", [])
+        falhas = resultados.get("falha", [])
+        
+        msg = f"Downloads concluídos!\n\n✅ Sucesso: {len(sucessos)}\n❌ Falhas: {len(falhas)}"
+        
+        if falhas:
+            msg += "\n\nErros:\n"
+            for url, erro in falhas:
+                msg += f"• {url}: {erro}\n"
+        
+        icon = QMessageBox.Icon.Information if not falhas else QMessageBox.Icon.Warning
+        self.show_centered_message("Relatório de Download", msg, icon)
+        
+        # Auto-preencher aba de upload com o primeiro sucesso (opcional)
+        if sucessos and hasattr(self, 'upload_widget'):
+            primeiro_arquivo = sucessos[0][1]
+            self.upload_widget.set_file(str(primeiro_arquivo))
     
     def processar_clip(self, info_clip: dict):
         """Processa um clip selecionado pelo usuário"""
