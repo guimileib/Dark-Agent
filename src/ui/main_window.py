@@ -100,17 +100,24 @@ class ProcessadorThread(QThread):
                 logger.info(f"Processando: {url}")
                 
                 try:
-                    # Download
-                    self.progresso.emit(f"{prefixo}Baixando vídeo...", 10)
-                    downloader = VideoDownloader(self.config["pasta"])
-                    sucesso, caminho_video, estrategia = downloader.download(
-                        url,
-                        self.config["qualidade"]
-                    )
+                    # Check if it is a local file
+                    is_local_file = Path(url).exists() and Path(url).is_file()
                     
-                    if not sucesso:
-                        resultados["falha"].append((url, "Falha no download"))
-                        continue
+                    if is_local_file:
+                        caminho_video = Path(url)
+                        self.progresso.emit(f"{prefixo}Arquivo local detectado...", 10)
+                    else:
+                        # Download
+                        self.progresso.emit(f"{prefixo}Baixando vídeo...", 10)
+                        downloader = VideoDownloader(self.config["pasta"])
+                        sucesso, caminho_video, estrategia = downloader.download(
+                            url,
+                            self.config["qualidade"]
+                        )
+                        
+                        if not sucesso:
+                            resultados["falha"].append((url, "Falha no download"))
+                            continue
                     
                     # Validar
                     self.progresso.emit(f"{prefixo}Validando vídeo...", 20)
@@ -160,7 +167,7 @@ class ProcessadorThread(QThread):
                 except Exception as e:
                     logger.error(f"Erro ao processar {url}: {e}")
                     resultados["falha"].append((url, str(e)))
-                    
+            
             self.progresso.emit("Processamento concluído!", 100)
             self.concluido.emit(resultados)
             
@@ -417,12 +424,29 @@ class MainWindow(QMainWindow):
         self.btn_processar.setVisible(nome_aba == "Legendas")
 
     def processar_video(self):
-        """Inicia processamento do vídeo (Batch)"""
-        # Validar configuração
-        config = self.download_widget.get_configuracao()
+        """Inicia processamento do vídeo (Batch Auto)"""
+        # Tentar pegar arquivos da aba Upload (Prioridade)
+        files = self.upload_widget.get_selected_files()
         
-        if not config["urls"]:
-            self.show_centered_message("Aviso", "Por favor, insira pelo menos uma URL válida!", QMessageBox.Icon.Warning)
+        # Tentar pegar URLs da aba Download
+        config_download = self.download_widget.get_configuracao()
+        urls = config_download.get("urls", [])
+        
+        items_para_processar = []
+        
+        # Lógica de prioridade: Se tiver arquivos locais selecionados, usa eles.
+        # Caso contrário, usa as URLs.
+        if files:
+            items_para_processar = files
+        elif urls:
+            items_para_processar = urls
+            
+        if not items_para_processar:
+            self.show_centered_message(
+                "Aviso", 
+                "Por favor, selecione vídeos na aba 'Upload' ou insira links na aba 'Download'!", 
+                QMessageBox.Icon.Warning
+            )
             return
         
         estilo = self.subtitle_widget.get_estilo_atual()
@@ -430,6 +454,13 @@ class MainWindow(QMainWindow):
         if not estilo:
             self.show_centered_message("Aviso", "Por favor, selecione um estilo de legenda!", QMessageBox.Icon.Warning)
             return
+        
+        # Configuração final
+        config = {
+            "urls": items_para_processar, # ProcessadorThread usa 'urls' para iterar (seja link ou arquivo)
+            "qualidade": config_download.get("qualidade", "720p"), # Fallback qualidade
+            "pasta": config_download.get("pasta", Path(".")) # Fallback pasta
+        }
         
         # Desabilitar botão
         self.btn_processar.setEnabled(False)
