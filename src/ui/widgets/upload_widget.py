@@ -216,13 +216,19 @@ class UploadWidget(QWidget):
             self.lbl_progress.setText("❌ Falha no login")
 
     def start_upload(self):
-        video = self.file_path.text()
+        files = self.get_selected_files()
+        if not files:
+            QMessageBox.warning(self, "Erro", "Selecione pelo menos um arquivo de vídeo!")
+            return
+            
+        video = files[0] # Por enquanto, pega o primeiro para upload
+        
         title_text = self.txt_title_field.text() # Title
         caption_text = self.txt_caption.toPlainText() # Description
         hashtags = self.txt_hashtags.text().replace("#", "").split()
         
-        if not video or not Path(video).exists():
-            QMessageBox.warning(self, "Erro", "Selecione um arquivo de vídeo válido!")
+        if not Path(video).exists():
+            QMessageBox.warning(self, "Erro", "Arquivo de vídeo não encontrado!")
             return
             
         if not caption_text:
@@ -261,5 +267,5 @@ class UploadWidget(QWidget):
             self.lbl_progress.setText("❌ Falha no upload")
 
     def set_file(self, path):
-        """Set file path programmatically"""
-        self.file_path.setText(str(path))
+        """Add file path programmatically"""
+        self.file_list.addItem(str(path))
