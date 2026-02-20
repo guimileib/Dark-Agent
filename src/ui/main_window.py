@@ -96,8 +96,27 @@ class ProcessadorThread(QThread):
                 if not url.strip():
                     continue
                 
-                prefixo = f"[{i+1}/{total_videos}] "
+                # Base progress calculation
+                # Each video takes (100 / total_videos)% of the total progress
+                video_progress_start = int((i / total_videos) * 100)
+                video_progress_chunk = 100 / total_videos
+                
+                def report_progress(msg, step_percent):
+                    """
+                    step_percent: 0-100 relative to this video
+                    global_percent: 0-100 absolute
+                    """
+                    current_chunk_progress = (step_percent / 100) * video_progress_chunk
+                    global_percent = int(video_progress_start + current_chunk_progress)
+                    # Clamp to 100
+                    global_percent = min(99, global_percent)
+                    
+                    # Log formatted message
+                    formatted_msg = f"[{i+1}/{total_videos}] {msg}"
+                    self.progresso.emit(formatted_msg, global_percent)
+
                 logger.info(f"Processando: {url}")
+                report_progress("Iniciando...", 0)
                 
                 try:
                     # Check if it is a local file
@@ -105,10 +124,10 @@ class ProcessadorThread(QThread):
                     
                     if is_local_file:
                         caminho_video = Path(url)
-                        self.progresso.emit(f"{prefixo}Arquivo local detectado...", 10)
+                        report_progress(f"Arquivo local: {caminho_video.name}", 5)
                     else:
                         # Download
-                        self.progresso.emit(f"{prefixo}Baixando vídeo...", 10)
+                        report_progress("Baixando vídeo...", 10)
                         downloader = VideoDownloader(self.config["pasta"])
                         sucesso, caminho_video, estrategia = downloader.download(
                             url,
@@ -120,7 +139,7 @@ class ProcessadorThread(QThread):
                             continue
                     
                     # Validar
-                    self.progresso.emit(f"{prefixo}Validando vídeo...", 20)
+                    report_progress("Validando vídeo...", 20)
                     valido, checks = VideoValidator.validar_video_completo(caminho_video)
                     
                     if not valido:
@@ -128,7 +147,7 @@ class ProcessadorThread(QThread):
                         continue
                     
                     # Extrair áudio
-                    self.progresso.emit(f"{prefixo}Extraindo áudio...", 30)
+                    report_progress("Extraindo áudio...", 30)
                     transcriber = Transcriber(
                         modelo=settings.whisper_model,
                         idioma=settings.whisper_language  # None = auto-detect
@@ -140,29 +159,30 @@ class ProcessadorThread(QThread):
                         continue
                     
                     # Transcrever
-                    self.progresso.emit(f"{prefixo}Transcrevendo com IA...", 50)
+                    report_progress("Transcrevendo com IA...", 50)
                     transcricao = transcriber.transcrever(audio_path)
                     
                     # Gerar legendas
-                    self.progresso.emit(f"{prefixo}Gerando legendas...", 70)
+                    report_progress("Gerando legendas...", 70)
                     subtitle_gen = SubtitleGenerator()
                     ass_path = caminho_video.parent / f"{caminho_video.stem}.ass"
                     
                     subtitle_gen.gerar_ass(transcricao, self.estilo, ass_path)
                     
                     # Queimar legendas
-                    self.progresso.emit(f"{prefixo}Queimando legendas...", 85)
+                    report_progress("Renderizando vídeo final...", 85)
                     editor = VideoEditor()
                     output_path = caminho_video.parent / f"{caminho_video.stem}_final.mp4"
                     
                     if not editor.queimar_legendas(caminho_video, ass_path, output_path):
-                        resultados["falha"].append((url, "Falha ao queimar legendas"))
+                        resultados["falha"].append((url, "Falha ao renderizar"))
                         continue
                     
                     # Limpar temporários
                     audio_path.unlink(missing_ok=True)
                     
                     resultados["sucesso"].append((url, output_path))
+                    report_progress("Concluído!", 100)
                     
                 except Exception as e:
                     logger.error(f"Erro ao processar {url}: {e}")
@@ -422,29 +442,42 @@ class MainWindow(QMainWindow):
         nome_aba = self.tab_widget.tabText(index)
         # Mostrar botão de processar apenas na aba 'Legendas'
         self.btn_processar.setVisible(nome_aba == "Legendas")
+        
+        # Se mudou para a aba Legendas, atualizar lista de vídeos
+        if nome_aba == "Legendas":
+            self.atualizar_lista_videos_para_processar()
+
+    def atualizar_lista_videos_para_processar(self):
+        """Coleta vídeos das abas Upload e Download e atualiza lista na aba Legendas"""
+        items = []
+        
+        # 1. Arquivos locais (Upload) - Prioridade
+        if hasattr(self, 'upload_widget'):
+            files = self.upload_widget.get_selected_files()
+            if files:
+                items.extend(files)
+        
+        # 2. URLs (Download) - Se não houver arquivos locais (ou opcionalmente ambos)
+        # Por enquanto, mantemos a lógica de 'ou um ou outro' para simplificar o UX
+        # Se adicionar URLs junto com arquivos, o usuario pode se confundir
+        if not items and hasattr(self, 'download_widget'):
+            config_download = self.download_widget.get_configuracao()
+            urls = config_download.get("urls", [])
+            items.extend(urls)
+            
+        # Atualizar widget de legendas
+        if hasattr(self, 'subtitle_widget'):
+            self.subtitle_widget.update_video_list(items)
 
     def processar_video(self):
         """Inicia processamento do vídeo (Batch Auto)"""
-        # Tentar pegar arquivos da aba Upload (Prioridade)
-        files = self.upload_widget.get_selected_files()
-        
-        # Tentar pegar URLs da aba Download
-        config_download = self.download_widget.get_configuracao()
-        urls = config_download.get("urls", [])
-        
-        items_para_processar = []
-        
-        # Lógica de prioridade: Se tiver arquivos locais selecionados, usa eles.
-        # Caso contrário, usa as URLs.
-        if files:
-            items_para_processar = files
-        elif urls:
-            items_para_processar = urls
+        # Obter vídeos selecionados na aba de Legendas
+        items_para_processar = self.subtitle_widget.get_selected_videos()
             
         if not items_para_processar:
             self.show_centered_message(
                 "Aviso", 
-                "Por favor, selecione vídeos na aba 'Upload' ou insira links na aba 'Download'!", 
+                "Por favor, selecione pelo menos um vídeo na lista!", 
                 QMessageBox.Icon.Warning
             )
             return
@@ -456,6 +489,7 @@ class MainWindow(QMainWindow):
             return
         
         # Configuração final
+        config_download = self.download_widget.get_configuracao()
         config = {
             "urls": items_para_processar, # ProcessadorThread usa 'urls' para iterar (seja link ou arquivo)
             "qualidade": config_download.get("qualidade", "720p"), # Fallback qualidade

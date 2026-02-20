@@ -3,7 +3,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
     QLabel, QScrollArea, QGroupBox, QComboBox, QGridLayout, QSlider, QFrame,
-    QColorDialog
+    QColorDialog, QListWidget, QListWidgetItem
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QThread
 from PyQt6.QtGui import QPixmap, QColor
@@ -258,11 +258,92 @@ class SubtitleWidget(QWidget):
         self.btn_cor.clicked.connect(self.selecionar_cor)
         config_layout.addWidget(self.btn_cor)
         
+        config_layout.addSpacing(10)
+
+        # --- Lista de Vídeos para Processar ---
+        videos_label = QLabel("Vídeos Selecionados:")
+        videos_label.setStyleSheet("font-weight: bold; color: #e2e8f0; margin-top: 10px;")
+        config_layout.addWidget(videos_label)
+
+        self.video_list = QListWidget()
+        self.video_list.setSelectionMode(QListWidget.SelectionMode.NoSelection) # Seleção apenas por checkbox
+        self.video_list.setStyleSheet("""
+            QListWidget {
+                background-color: rgba(20, 20, 30, 0.6);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                color: white;
+            }
+            QListWidget::item {
+                padding: 5px;
+            }
+            QListWidget::item:hover {
+                background-color: rgba(255, 255, 255, 0.1);
+            }
+        """)
+        config_layout.addWidget(self.video_list)
+
+        # Botões de seleção
+        btn_select_layout = QHBoxLayout()
+        self.btn_check_all = QPushButton("Marcar Todos")
+        self.btn_check_all.clicked.connect(self.check_all_videos)
+        self.btn_check_all.setStyleSheet("font-size: 11px; padding: 4px;")
+        
+        self.btn_uncheck_all = QPushButton("Desmarcar Todos")
+        self.btn_uncheck_all.clicked.connect(self.uncheck_all_videos)
+        self.btn_uncheck_all.setStyleSheet("font-size: 11px; padding: 4px;")
+        
+        btn_select_layout.addWidget(self.btn_check_all)
+        btn_select_layout.addWidget(self.btn_uncheck_all)
+        config_layout.addLayout(btn_select_layout)
+        
         right_layout.addWidget(config_group)
         
         layout.addWidget(right_container, 6) # 60% width
         
         self.setLayout(layout)
+
+    def update_video_list(self, items):
+        """Atualiza a lista de vídeos disponíveis para processamento"""
+        self.video_list.clear()
+        
+        for item in items:
+            # item pode ser URL (str) ou Path
+            text = str(item)
+            list_item = QListWidgetItem(text)
+            list_item.setFlags(list_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            list_item.setCheckState(Qt.CheckState.Checked) # Marcado por padrão
+            
+            # Tooltip para ver caminho completo
+            list_item.setToolTip(text)
+            
+            # Se for caminho local, mostrar apenas nome do arquivo para limpeza visual
+            if Path(text).exists() and Path(text).is_file():
+                list_item.setText(f"📁 {Path(text).name}")
+            else:
+                list_item.setText(f"🌐 {text}")
+                
+            # Guardar valor original
+            list_item.setData(Qt.ItemDataRole.UserRole, text)
+            
+            self.video_list.addItem(list_item)
+            
+    def get_selected_videos(self):
+        """Retorna lista de vídeos marcados (checkados)"""
+        selected = []
+        for i in range(self.video_list.count()):
+            item = self.video_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                selected.append(item.data(Qt.ItemDataRole.UserRole))
+        return selected
+        
+    def check_all_videos(self):
+        for i in range(self.video_list.count()):
+            self.video_list.item(i).setCheckState(Qt.CheckState.Checked)
+
+    def uncheck_all_videos(self):
+        for i in range(self.video_list.count()):
+            self.video_list.item(i).setCheckState(Qt.CheckState.Unchecked)
     
     def carregar_previews_existentes(self):
         """Carrega previews já existentes no disco"""

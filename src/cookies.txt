@@ -36,3 +36,8 @@ www.tiktok.com	FALSE	/	FALSE	1777667834	msToken	aP12hfxdJz1G7JW247BXLYMMptuDJJmF
 .youtube.com	TRUE	/	TRUE	1787095776	VISITOR_INFO1_LIVE	fl7hhVuPDow
 .youtube.com	TRUE	/	TRUE	1787095776	VISITOR_PRIVACY_METADATA	CgJCUhIEGgAgKg%3D%3D
 .youtube.com	TRUE	/	TRUE	1787095773	__Secure-ROLLOUT_TOKEN	CJ2E4P2Ul4SF-QEQ-Pqj6drmkgMYsqm16trmkgM%3D
+.topaz.paramount.tech	TRUE	/topaz/api/mgid:arc:episode:shared.southpark.br.en-us:600997fa-ecfd-11e0-aca6-0026b9414f30	TRUE	1771548870	CC-present	true
+.topaz.paramount.tech	TRUE	/topaz/api/mgid:arc:episode:shared.southpark.br.en-us:600b7412-ecfd-11e0-aca6-0026b9414f30	TRUE	1771549353	CC-present	true
+.topaz.paramount.tech	TRUE	/topaz/api/mgid:arc:episode:shared.southpark.br.en-us:6007162e-ecfd-11e0-aca6-0026b9414f30	TRUE	1771549483	CC-present	true
+.topaz.paramount.tech	TRUE	/topaz/api/mgid:arc:episode:shared.southpark.br.en-us:600e115e-ecfd-11e0-aca6-0026b9414f30	TRUE	1771549596	CC-present	true
+.topaz.paramount.tech	TRUE	/topaz/api/mgid:arc:episode:shared.southpark.br.en-us:600c513e-ecfd-11e0-aca6-0026b9414f30	TRUE	1771549731	CC-present	true
