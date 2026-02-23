@@ -88,3 +88,7 @@ tests/
 
 # Arquivos de documentação
 docs/
+
+# Arquivos de cookies
+src/cookies/
+

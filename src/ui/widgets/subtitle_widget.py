@@ -83,10 +83,15 @@ class SubtitleWidget(QWidget):
         self.preview_renderer = preview_renderer
         self.previews_cache = {}  # {estilo_id: {tamanho: caminho}}
         self.preview_thread = None
+        self._current_pixmap = None
         self.init_ui()
-        
-        # Carregar previews automaticamente
+
+        # Carregar previews existentes
         self.carregar_previews_existentes()
+
+        # Auto-selecionar primeiro estilo e gerar preview
+        if self.estilos:
+            self.selecionar_estilo(self.estilos[0])
     
     def init_ui(self):
         layout = QHBoxLayout()
@@ -138,15 +143,15 @@ class SubtitleWidget(QWidget):
             
             btn = QPushButton(f"{icon}\n{nome_simples}")
             btn.setCheckable(True)
-            btn.setFixedSize(110, 110)
+            btn.setFixedSize(90, 72)   # menor para não inflar minimum size
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: rgba(30, 41, 59, 0.7);
                     color: white;
                     border: 2px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 16px;
+                    border-radius: 12px;
                     font-weight: bold;
-                    font-size: 13px;
+                    font-size: 11px;
                     text-align: center;
                 }
                 QPushButton:hover {
@@ -182,7 +187,11 @@ class SubtitleWidget(QWidget):
         
         # Preview Area
         self.preview_canvas = QLabel()
-        self.preview_canvas.setMinimumSize(320, 180) # 16:9 aspect ratio base
+        self.preview_canvas.setMinimumSize(240, 135)
+        self.preview_canvas.setSizePolicy(
+            self.preview_canvas.sizePolicy().horizontalPolicy(),
+            self.preview_canvas.sizePolicy().verticalPolicy()
+        )
         self.preview_canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_canvas.setStyleSheet("""
             QLabel {
@@ -192,7 +201,7 @@ class SubtitleWidget(QWidget):
             }
         """)
         self.preview_canvas.setText("Selecione um estilo")
-        right_layout.addWidget(self.preview_canvas, 1) # Expand vertically
+        right_layout.addWidget(self.preview_canvas, 3)  # peso 3 = ocupa a maior parte
         
         # Slider de tempo (visual apenas)
         time_layout = QHBoxLayout()
@@ -217,56 +226,37 @@ class SubtitleWidget(QWidget):
         time_layout.addWidget(QLabel("00:10"))
         right_layout.addLayout(time_layout)
         
-        # Configurações
+        # Configurações — dentro de QScrollArea para não cortar em telas pequenas
         config_group = QWidget()
         config_group.setStyleSheet("background-color: rgba(30, 41, 59, 0.5); border-radius: 12px; padding: 10px;")
         config_layout = QVBoxLayout(config_group)
-        
+        config_layout.setSpacing(6)
+
         # Tamanho da Fonte
-        tamanho_label = QLabel("Tamanho da Fonte:")
-        tamanho_label.setStyleSheet("font-weight: bold; color: #e2e8f0;")
-        config_layout.addWidget(tamanho_label)
-        
+        config_layout.addWidget(QLabel("Tamanho da Fonte:"))
         self.tamanho_combo = QComboBox()
         self.tamanho_combo.addItems([str(s) for s in [12, 18, 24, 28, 32, 36, 40, 44, 48]])
         self.tamanho_combo.setCurrentText("48")
         self.tamanho_combo.currentTextChanged.connect(self.atualizar_tamanho)
-        self.tamanho_combo.setMinimumHeight(40)
         config_layout.addWidget(self.tamanho_combo)
-        
-        config_layout.addSpacing(10)
-        
+
         # Posição
-        posicao_label = QLabel("Posição da Legenda:")
-        posicao_label.setStyleSheet("font-weight: bold; color: #e2e8f0;")
-        config_layout.addWidget(posicao_label)
-        
+        config_layout.addWidget(QLabel("Posição da Legenda:"))
         self.posicao_combo = QComboBox()
         self.posicao_combo.addItems(["Embaixo", "Centro", "Topo"])
-        self.posicao_combo.setMinimumHeight(40)
         config_layout.addWidget(self.posicao_combo)
-        
-        config_layout.addSpacing(10)
-        
+
         # Cor do Texto
-        cor_label = QLabel("Cor do Texto:")
-        cor_label.setStyleSheet("font-weight: bold; color: #e2e8f0;")
-        config_layout.addWidget(cor_label)
-        
+        config_layout.addWidget(QLabel("Cor do Texto:"))
         self.btn_cor = QPushButton("Alterar Cor")
-        self.btn_cor.setMinimumHeight(40)
         self.btn_cor.clicked.connect(self.selecionar_cor)
         config_layout.addWidget(self.btn_cor)
-        
-        config_layout.addSpacing(10)
 
-        # --- Lista de Vídeos para Processar ---
-        videos_label = QLabel("Vídeos Selecionados:")
-        videos_label.setStyleSheet("font-weight: bold; color: #e2e8f0; margin-top: 10px;")
-        config_layout.addWidget(videos_label)
-
+        # Lista de Vídeos para Processar
+        config_layout.addWidget(QLabel("Vídeos Selecionados:"))
         self.video_list = QListWidget()
-        self.video_list.setSelectionMode(QListWidget.SelectionMode.NoSelection) # Seleção apenas por checkbox
+        self.video_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.video_list.setMinimumHeight(60)
         self.video_list.setStyleSheet("""
             QListWidget {
                 background-color: rgba(20, 20, 30, 0.6);
@@ -274,12 +264,8 @@ class SubtitleWidget(QWidget):
                 border-radius: 8px;
                 color: white;
             }
-            QListWidget::item {
-                padding: 5px;
-            }
-            QListWidget::item:hover {
-                background-color: rgba(255, 255, 255, 0.1);
-            }
+            QListWidget::item { padding: 4px; }
+            QListWidget::item:hover { background-color: rgba(255,255,255,0.1); }
         """)
         config_layout.addWidget(self.video_list)
 
@@ -288,16 +274,22 @@ class SubtitleWidget(QWidget):
         self.btn_check_all = QPushButton("Marcar Todos")
         self.btn_check_all.clicked.connect(self.check_all_videos)
         self.btn_check_all.setStyleSheet("font-size: 11px; padding: 4px;")
-        
         self.btn_uncheck_all = QPushButton("Desmarcar Todos")
         self.btn_uncheck_all.clicked.connect(self.uncheck_all_videos)
         self.btn_uncheck_all.setStyleSheet("font-size: 11px; padding: 4px;")
-        
         btn_select_layout.addWidget(self.btn_check_all)
         btn_select_layout.addWidget(self.btn_uncheck_all)
         config_layout.addLayout(btn_select_layout)
-        
-        right_layout.addWidget(config_group)
+        config_layout.addStretch()
+
+        # Scroll area para o grupo de configs
+        config_scroll = QScrollArea()
+        config_scroll.setWidget(config_group)
+        config_scroll.setWidgetResizable(True)
+        config_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        config_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        config_scroll.setStyleSheet("background: transparent;")
+        right_layout.addWidget(config_scroll, 1)
         
         layout.addWidget(right_container, 6) # 60% width
         
@@ -498,69 +490,67 @@ class SubtitleWidget(QWidget):
         # Carregar e exibir preview
         if caminho_preview and Path(caminho_preview).exists():
             pixmap = QPixmap(caminho_preview)
-            
             if not pixmap.isNull():
-                # Escalar mantendo proporção
-                scaled = pixmap.scaled(640, 360, Qt.AspectRatioMode.KeepAspectRatio, 
-                                      Qt.TransformationMode.SmoothTransformation)
-                self.preview_canvas.setPixmap(scaled)
+                self._exibir_pixmap(pixmap)
                 logger.debug(f"Preview exibido: {caminho_preview}")
                 return
-        
+
         # Fallback: gerar preview sob demanda (ASYNC)
         if self.preview_renderer:
-            logger.info(f"Iniciando geração de preview async para {estilo_id} tamanho {tamanho} cor {cor_safe}")
-            
-            # Mostrar loading
-            self.preview_canvas.setText("Gerando preview...")
-            
-            # Cancelar thread anterior se existir
+            logger.info(f"Iniciando geração de preview async para {estilo_id} tamanho {tamanho}")
+            self.preview_canvas.setText("⏳ Gerando preview...")
+
             if self.preview_thread and self.preview_thread.isRunning():
                 self.preview_thread.terminate()
                 self.preview_thread.wait()
-            
-            # Iniciar nova thread
+
             self.preview_thread = SinglePreviewGeneratorThread(
-                self.preview_renderer, 
-                self.estilo_atual, 
-                tamanho, 
+                self.preview_renderer,
+                self.estilo_atual,
+                tamanho,
                 force=force
             )
             self.preview_thread.preview_ready.connect(self._on_preview_ready)
             self.preview_thread.start()
             return
-        
-        # Fallback final: mostrar informações do estilo
-        info = f"{self.estilo_atual.nome}\n\n"
-        info += f"{self.estilo_atual.texto_exemplo}\n\n"
-        info += f"Tamanho: {self.estilo_atual.tamanho}px\n"
-        info += f"Fonte: {self.estilo_atual.fonte}"
+
+        # Fallback final
+        info = f"{self.estilo_atual.nome}\n\nTamanho: {self.estilo_atual.tamanho}px"
         self.preview_canvas.setText(info)
-        logger.warning(f"Preview não disponível para {estilo_id} tamanho {tamanho}")
+
+    def _exibir_pixmap(self, pixmap):
+        """Escala o pixmap ao tamanho atual do canvas e exibe."""
+        cw = max(self.preview_canvas.width(), 320)
+        ch = max(self.preview_canvas.height(), 180)
+        scaled = pixmap.scaled(cw, ch,
+                               Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
+        self.preview_canvas.setPixmap(scaled)
+        # Guardar para re-escalar ao redimensionar
+        self._current_pixmap = pixmap
+
+    def resizeEvent(self, event):
+        """Re-escala o preview quando a janela é redimensionada."""
+        super().resizeEvent(event)
+        if hasattr(self, "_current_pixmap") and self._current_pixmap:
+            self._exibir_pixmap(self._current_pixmap)
 
     def _on_preview_ready(self, path):
-        """Callback quando o preview async fica pronto"""
+        """Callback quando o preview async fica pronto."""
         if not self.estilo_atual:
             return
-            
-        # Verificar se o preview gerado ainda corresponde ao estilo atual (race condition)
-        # Mas como passamos o path, podemos apenas exibir e atualizar o cache
-        
+
         estilo_id = self.estilo_atual.id
         tamanho = self.estilo_atual.tamanho
-        
-        # Atualizar cache
+
         if estilo_id not in self.previews_cache:
             self.previews_cache[estilo_id] = {}
         self.previews_cache[estilo_id][tamanho] = path
-        
-        # Exibir
+
         if Path(path).exists():
             pixmap = QPixmap(path)
             if not pixmap.isNull():
-                scaled = pixmap.scaled(640, 360, Qt.AspectRatioMode.KeepAspectRatio, 
-                                      Qt.TransformationMode.SmoothTransformation)
-                self.preview_canvas.setPixmap(scaled)
+                self._exibir_pixmap(pixmap)
                 logger.info(f"Preview async exibido: {path}")
     
     def recarregar_previews(self):
