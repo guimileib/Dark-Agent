@@ -77,7 +77,7 @@ config.local.json
 htmlcov/
 
 # Arquivos de crash
-crash.txt   
+crash.txt
 
 # Arquivos de assets
 src/assets/
