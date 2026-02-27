@@ -3,10 +3,11 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
     QLabel, QScrollArea, QGroupBox, QComboBox, QGridLayout, QSlider, QFrame,
-    QColorDialog, QListWidget, QListWidgetItem
+    QColorDialog, QListWidget, QListWidgetItem, QFileDialog, QAbstractItemView,
+    QSizePolicy
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QThread
-from PyQt6.QtGui import QPixmap, QColor
+from PyQt6.QtGui import QPixmap, QColor, QIcon
 from pathlib import Path
 import logging
 
@@ -86,6 +87,9 @@ class SubtitleWidget(QWidget):
         self._current_pixmap = None
         self.init_ui()
 
+        # Inicialmente esconder lista (sem vídeos)
+        self._toggle_placeholder()
+
         # Carregar previews existentes
         self.carregar_previews_existentes()
 
@@ -96,22 +100,226 @@ class SubtitleWidget(QWidget):
     def init_ui(self):
         layout = QHBoxLayout()
         layout.setSpacing(20)
-        
-        # --- Lado Esquerdo: Estilos ---
+
+        # =====================================================================
+        # --- Lado Esquerdo: Logo + Seleção de Vídeos + Estilos ---
+        # =====================================================================
         left_container = QFrame()
         left_container.setObjectName("GlassContainer")
         left_layout = QVBoxLayout(left_container)
-        left_layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Título
-        estilos_titulo = QLabel("Estilos de Legenda")
+        left_layout.setContentsMargins(20, 16, 20, 20)
+        left_layout.setSpacing(12)
+
+        # ── Logo do Software ────────────────────────────────────────────────
+        logo_frame = QFrame()
+        logo_frame.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(59,130,246,0.15), stop:1 rgba(139,92,246,0.15));
+                border-radius: 12px;
+                border: 1px solid rgba(59,130,246,0.3);
+            }
+        """)
+        logo_frame_layout = QHBoxLayout(logo_frame)
+        logo_frame_layout.setContentsMargins(12, 10, 12, 10)
+        logo_frame_layout.setSpacing(10)
+
+        # Carregar ícone do logo usando settings já importado no topo
+        icon_path = settings.assets_dir / "icon.png"
+        lbl_logo_img = QLabel()
+        if icon_path.exists():
+            pix = QPixmap(str(icon_path)).scaled(
+                42, 42,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            lbl_logo_img.setPixmap(pix)
+        else:
+            lbl_logo_img.setText("🎬")
+            lbl_logo_img.setStyleSheet("font-size: 30px;")
+        lbl_logo_img.setFixedSize(44, 44)
+        logo_frame_layout.addWidget(lbl_logo_img)
+
+        logo_text_layout = QVBoxLayout()
+        logo_text_layout.setSpacing(0)
+        lbl_app_name = QLabel("DarkAgent Pro")
+        lbl_app_name.setStyleSheet("""
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            font-family: 'Segoe UI', sans-serif;
+            background: transparent;
+            border: none;
+        """)
+        lbl_app_subtitle = QLabel("AI Video Studio · Legendas")
+        lbl_app_subtitle.setStyleSheet("""
+            color: #7dd3fc;
+            font-size: 11px;
+            font-family: 'Segoe UI', sans-serif;
+            background: transparent;
+            border: none;
+        """)
+        logo_text_layout.addWidget(lbl_app_name)
+        logo_text_layout.addWidget(lbl_app_subtitle)
+        logo_frame_layout.addLayout(logo_text_layout)
+        logo_frame_layout.addStretch()
+        left_layout.addWidget(logo_frame)
+
+        # ── Seleção de Vídeos ────────────────────────────────────────────────
+        videos_titulo = QLabel("📂  Vídeos para Processar")
+        videos_titulo.setStyleSheet("""
+            color: white;
+            font-size: 13px;
+            font-weight: bold;
+            margin-top: 4px;
+        """)
+        left_layout.addWidget(videos_titulo)
+
+        # Lista de vídeos (agora no painel esquerdo, mais visível)
+        self.video_list = QListWidget()
+        self.video_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.video_list.setMinimumHeight(100)
+        self.video_list.setMaximumHeight(160)
+        self.video_list.setStyleSheet("""
+            QListWidget {
+                background-color: rgba(15, 23, 42, 0.8);
+                border: 1px solid rgba(59, 130, 246, 0.3);
+                border-radius: 8px;
+                color: white;
+                font-size: 12px;
+            }
+            QListWidget::item {
+                padding: 6px 8px;
+                border-bottom: 1px solid rgba(255,255,255,0.05);
+            }
+            QListWidget::item:selected {
+                background-color: rgba(59, 130, 246, 0.3);
+                border-radius: 4px;
+            }
+            QListWidget::item:hover {
+                background-color: rgba(255,255,255,0.07);
+            }
+            QListWidget::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QListWidget::indicator:checked {
+                background-color: #3b82f6;
+                border-radius: 3px;
+                border: 1px solid #60a5fa;
+            }
+            QListWidget::indicator:unchecked {
+                background-color: rgba(30,41,59,0.8);
+                border-radius: 3px;
+                border: 1px solid rgba(255,255,255,0.2);
+            }
+        """)
+        left_layout.addWidget(self.video_list)
+
+        # Placeholder label when empty
+        self.lbl_no_videos = QLabel("Nenhum vídeo adicionado.\nClique em \"Adicionar Vídeos\" abaixo.")
+        self.lbl_no_videos.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_no_videos.setStyleSheet("""
+            color: #64748b;
+            font-size: 12px;
+            background: transparent;
+            border: none;
+        """)
+        self.lbl_no_videos.setVisible(True)
+        left_layout.addWidget(self.lbl_no_videos)
+
+        # Botões de ação de vídeo
+        video_btn_row1 = QHBoxLayout()
+        video_btn_row1.setSpacing(6)
+
+        self.btn_add_videos = QPushButton("➕  Adicionar Vídeos")
+        self.btn_add_videos.clicked.connect(self.browse_videos)
+        self.btn_add_videos.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_add_videos.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #2563eb; }
+            QPushButton:pressed { background-color: #1d4ed8; }
+        """)
+        video_btn_row1.addWidget(self.btn_add_videos)
+
+        self.btn_remove_videos = QPushButton("🗑  Remover")
+        self.btn_remove_videos.clicked.connect(self.remove_selected_videos)
+        self.btn_remove_videos.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_remove_videos.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(239,68,68,0.2);
+                color: #fca5a5;
+                border: 1px solid rgba(239,68,68,0.4);
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: rgba(239,68,68,0.35); }
+        """)
+        video_btn_row1.addWidget(self.btn_remove_videos)
+        left_layout.addLayout(video_btn_row1)
+
+        video_btn_row2 = QHBoxLayout()
+        video_btn_row2.setSpacing(6)
+
+        self.btn_check_all = QPushButton("✅  Marcar Todos")
+        self.btn_check_all.clicked.connect(self.check_all_videos)
+        self.btn_check_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_check_all.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(34,197,94,0.15);
+                color: #86efac;
+                border: 1px solid rgba(34,197,94,0.3);
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: rgba(34,197,94,0.28); }
+        """)
+        video_btn_row2.addWidget(self.btn_check_all)
+
+        self.btn_uncheck_all = QPushButton("⬜  Desmarcar Todos")
+        self.btn_uncheck_all.clicked.connect(self.uncheck_all_videos)
+        self.btn_uncheck_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_uncheck_all.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(100,116,139,0.15);
+                color: #94a3b8;
+                border: 1px solid rgba(100,116,139,0.3);
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: rgba(100,116,139,0.28); }
+        """)
+        video_btn_row2.addWidget(self.btn_uncheck_all)
+        left_layout.addLayout(video_btn_row2)
+
+        # Separador
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("background-color: rgba(255,255,255,0.08); max-height: 1px; border: none;")
+        left_layout.addWidget(sep)
+
+        # ── Estilos de Legenda ───────────────────────────────────────────────
+        estilos_titulo = QLabel("🎨  Estilos de Legenda")
         estilos_titulo.setObjectName("SectionTitle")
+        estilos_titulo.setStyleSheet("color: white; font-size: 13px; font-weight: bold;")
         left_layout.addWidget(estilos_titulo)
-        
+
         estilos_subtitulo = QLabel("Escolha o estilo visual das legendas")
-        estilos_subtitulo.setStyleSheet("color: #94a3b8; font-size: 12px; margin-bottom: 15px;")
+        estilos_subtitulo.setStyleSheet("color: #94a3b8; font-size: 12px; margin-bottom: 8px;")
         left_layout.addWidget(estilos_subtitulo)
-        
+
         # Scroll Area para Grid de Estilos
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -126,14 +334,14 @@ class SubtitleWidget(QWidget):
         # Criar botões para cada estilo em grid
         self.botoes_estilos = {}
         icons = {
-            "tiktok_classic": "🎵",   # Clássico
-            "tiktok_bold": "💣",      # Impactante
-            "reels_bold": "📸",       # Instagram
-            "youtube_shorts": "▶️",   # YouTube
-            "clean_minimal": "✨",    # Limpo
-            "neon_glow": "🌟",        # Neon
-            "bold_impact": "💥",      # Impacto
-            "gradient_wave": "🌊"     # Gradiente
+            "tiktok_classic": "🎵",
+            "tiktok_bold": "💣",
+            "reels_bold": "📸",
+            "youtube_shorts": "▶️",
+            "clean_minimal": "✨",
+            "neon_glow": "🌟",
+            "bold_impact": "💥",
+            "gradient_wave": "🌊"
         }
         
         row, col = 0, 0
@@ -143,7 +351,7 @@ class SubtitleWidget(QWidget):
             
             btn = QPushButton(f"{icon}\n{nome_simples}")
             btn.setCheckable(True)
-            btn.setFixedSize(90, 72)   # menor para não inflar minimum size
+            btn.setFixedSize(90, 72)
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: rgba(30, 41, 59, 0.7);
@@ -168,7 +376,7 @@ class SubtitleWidget(QWidget):
             self.botoes_estilos[estilo.id] = btn
             
             col += 1
-            if col >= 2:  # 2 colunas
+            if col >= 2:
                 col = 0
                 row += 1
         
@@ -176,7 +384,7 @@ class SubtitleWidget(QWidget):
         scroll.setWidget(scroll_content)
         left_layout.addWidget(scroll)
         
-        layout.addWidget(left_container, 4) # 40% width
+        layout.addWidget(left_container, 4)  # 40% width
         
         # --- Lado Direito: Preview e Config ---
         right_container = QFrame()
@@ -252,34 +460,6 @@ class SubtitleWidget(QWidget):
         self.btn_cor.clicked.connect(self.selecionar_cor)
         config_layout.addWidget(self.btn_cor)
 
-        # Lista de Vídeos para Processar
-        config_layout.addWidget(QLabel("Vídeos Selecionados:"))
-        self.video_list = QListWidget()
-        self.video_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        self.video_list.setMinimumHeight(60)
-        self.video_list.setStyleSheet("""
-            QListWidget {
-                background-color: rgba(20, 20, 30, 0.6);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                color: white;
-            }
-            QListWidget::item { padding: 4px; }
-            QListWidget::item:hover { background-color: rgba(255,255,255,0.1); }
-        """)
-        config_layout.addWidget(self.video_list)
-
-        # Botões de seleção
-        btn_select_layout = QHBoxLayout()
-        self.btn_check_all = QPushButton("Marcar Todos")
-        self.btn_check_all.clicked.connect(self.check_all_videos)
-        self.btn_check_all.setStyleSheet("font-size: 11px; padding: 4px;")
-        self.btn_uncheck_all = QPushButton("Desmarcar Todos")
-        self.btn_uncheck_all.clicked.connect(self.uncheck_all_videos)
-        self.btn_uncheck_all.setStyleSheet("font-size: 11px; padding: 4px;")
-        btn_select_layout.addWidget(self.btn_check_all)
-        btn_select_layout.addWidget(self.btn_uncheck_all)
-        config_layout.addLayout(btn_select_layout)
         config_layout.addStretch()
 
         # Scroll area para o grupo de configs
@@ -295,31 +475,57 @@ class SubtitleWidget(QWidget):
         
         self.setLayout(layout)
 
+    def _toggle_placeholder(self):
+        """Mostra/esconde placeholder depending on list content"""
+        has_items = self.video_list.count() > 0
+        self.video_list.setVisible(has_items)
+        self.lbl_no_videos.setVisible(not has_items)
+
+    def browse_videos(self):
+        """Abre diálogo para selecionar vídeos do computador"""
+        caminhos, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Selecionar Vídeos para Legendar",
+            "",
+            "Arquivos de Vídeo (*.mp4 *.mov *.avi *.mkv *.webm *.wmv *.flv *.m4v)"
+        )
+        for caminho in caminhos:
+            # Evitar duplicatas
+            already = False
+            for i in range(self.video_list.count()):
+                if self.video_list.item(i).data(Qt.ItemDataRole.UserRole) == caminho:
+                    already = True
+                    break
+            if not already:
+                self._add_video_item(caminho)
+        self._toggle_placeholder()
+
+    def remove_selected_videos(self):
+        """Remove os vídeos selecionados (highlight) da lista"""
+        for item in self.video_list.selectedItems():
+            self.video_list.takeItem(self.video_list.row(item))
+        self._toggle_placeholder()
+
+    def _add_video_item(self, text: str):
+        """Cria e adiciona um QListWidgetItem com checkbox para um caminho/URL"""
+        list_item = QListWidgetItem()
+        list_item.setFlags(list_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        list_item.setCheckState(Qt.CheckState.Checked)
+        list_item.setToolTip(text)
+        if Path(text).exists() and Path(text).is_file():
+            list_item.setText(f"📁 {Path(text).name}")
+        else:
+            list_item.setText(f"🌐 {text}")
+        list_item.setData(Qt.ItemDataRole.UserRole, text)
+        self.video_list.addItem(list_item)
+
     def update_video_list(self, items):
         """Atualiza a lista de vídeos disponíveis para processamento"""
         self.video_list.clear()
-        
         for item in items:
-            # item pode ser URL (str) ou Path
-            text = str(item)
-            list_item = QListWidgetItem(text)
-            list_item.setFlags(list_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            list_item.setCheckState(Qt.CheckState.Checked) # Marcado por padrão
-            
-            # Tooltip para ver caminho completo
-            list_item.setToolTip(text)
-            
-            # Se for caminho local, mostrar apenas nome do arquivo para limpeza visual
-            if Path(text).exists() and Path(text).is_file():
-                list_item.setText(f"📁 {Path(text).name}")
-            else:
-                list_item.setText(f"🌐 {text}")
-                
-            # Guardar valor original
-            list_item.setData(Qt.ItemDataRole.UserRole, text)
-            
-            self.video_list.addItem(list_item)
-            
+            self._add_video_item(str(item))
+        self._toggle_placeholder()
+
     def get_selected_videos(self):
         """Retorna lista de vídeos marcados (checkados)"""
         selected = []
@@ -328,7 +534,7 @@ class SubtitleWidget(QWidget):
             if item.checkState() == Qt.CheckState.Checked:
                 selected.append(item.data(Qt.ItemDataRole.UserRole))
         return selected
-        
+
     def check_all_videos(self):
         for i in range(self.video_list.count()):
             self.video_list.item(i).setCheckState(Qt.CheckState.Checked)

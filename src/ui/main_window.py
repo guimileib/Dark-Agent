@@ -347,6 +347,7 @@ class MainWindow(QMainWindow):
         layout_download = QVBoxLayout(tab_download)
         self.download_widget = DownloadWidget()
         self.download_widget.download_video_apenas.connect(self.baixar_video_apenas)
+        self.download_widget.download_e_legendar.connect(self.iniciar_fluxo_completo)
         layout_download.addWidget(self.download_widget)
         self.tab_widget.addTab(tab_download, "Download")
         
@@ -405,8 +406,17 @@ class MainWindow(QMainWindow):
         
         central_widget.setLayout(layout)
 
-        # Abrir maximizado — respeita a barra de tarefas automaticamente
-        self.showMaximized()
+        # Tamanho mínimo e padrão — permite redimensionamento livre
+        self.setMinimumSize(800, 600)
+        self.resize(1280, 800)
+
+        # Centralizar na tela
+        from PyQt6.QtGui import QScreen
+        screen = self.screen() or QScreen()
+        screen_geometry = screen.availableGeometry()
+        x = (screen_geometry.width() - 1280) // 2 + screen_geometry.x()
+        y = (screen_geometry.height() - 800) // 2 + screen_geometry.y()
+        self.move(x, y)
     
     def gerar_previews_iniciais(self):
         """Gera previews dos estilos ao iniciar o aplicativo"""
@@ -582,6 +592,71 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'subtitle_widget'):
             self.subtitle_widget.recarregar_previews()
     
+    def iniciar_fluxo_completo(self, urls, qualidade, pasta):
+        """Inicia o fluxo completo: download + legenda para URLs da aba Download."""
+        if not urls:
+            self.show_centered_message(
+                "Aviso",
+                "Adicione pelo menos uma URL na fila de downloads!",
+                QMessageBox.Icon.Warning
+            )
+            return
+
+        estilo = self.subtitle_widget.get_estilo_atual()
+        if not estilo:
+            self.show_centered_message(
+                "Aviso",
+                "Nenhum estilo de legenda selecionado.\n"
+                "Vá à aba Legendas e escolha um estilo antes de continuar.",
+                QMessageBox.Icon.Warning
+            )
+            return
+
+        config = {
+            "urls": urls,
+            "qualidade": qualidade,
+            "pasta": pasta,
+        }
+
+        # Desabilitar botões
+        self.download_widget.btn_baixar.setEnabled(False)
+        self.download_widget.btn_baixar_legendar.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.status_label.setText("⚡ Iniciando fluxo completo...")
+
+        self.thread_processamento = ProcessadorThread(config, estilo)
+        self.thread_processamento.progresso.connect(self.atualizar_progresso)
+        self.thread_processamento.concluido.connect(self._fluxo_completo_concluido)
+        self.thread_processamento.start()
+
+    def _fluxo_completo_concluido(self, resultados):
+        """Callback quando o fluxo completo (download+legenda) termina."""
+        self.download_widget.btn_baixar.setEnabled(True)
+        self.download_widget.btn_baixar_legendar.setEnabled(True)
+
+        sucessos = resultados.get("sucesso", [])
+        falhas   = resultados.get("falha", [])
+
+        msg = f"Fluxo completo concluído!\n\n✅ Com legenda: {len(sucessos)}\n❌ Falhas: {len(falhas)}"
+        if falhas:
+            msg += "\n\nErros:\n"
+            for url, erro in falhas:
+                msg += f"• {url[:60]}: {erro}\n"
+
+        icon = QMessageBox.Icon.Information if not falhas else QMessageBox.Icon.Warning
+        if sucessos or falhas:
+            self.show_centered_message("Relatório — Baixar + Legendar", msg, icon)
+
+        self.status_label.setText("")
+        if not (hasattr(self, 'thread_preview') and self.thread_preview and self.thread_preview.isRunning()):
+            self.progress_bar.setVisible(False)
+        self.progress_bar.setValue(0)
+
+        # Preencher aba Upload com o primeiro vídeo legendado
+        if sucessos and hasattr(self, 'upload_widget'):
+            self.upload_widget.set_file(str(sucessos[0][1]))
+
     def baixar_video_apenas(self, urls, qualidade, pasta):
         """Inicia download apenas do vídeo (Batch)"""
         if not urls:
