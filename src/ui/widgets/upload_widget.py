@@ -4,15 +4,19 @@ UploadWidget — multiple TikTok accounts, multi-browser, post-now / scheduled.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QDateTime
+from PyQt6.QtCore import (
+    Qt, QDate, QThread, QTimer, pyqtSignal, QDateTime, QSize,
+)
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QWheelEvent
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QComboBox, QDateTimeEdit,
+    QAbstractItemView, QButtonGroup, QCalendarWidget, QComboBox,
     QFileDialog, QFrame, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
-    QPushButton, QRadioButton, QTextEdit, QVBoxLayout, QWidget,
+    QPushButton, QRadioButton, QScrollArea, QSizePolicy,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
 from core.uploader import (
@@ -23,6 +27,215 @@ from core.uploader import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Custom calendar + drum-roll time picker
+# ---------------------------------------------------------------------------
+
+class DrumRoll(QWidget):
+    """
+    A vertical 'drum-roll' selector.
+    Shows the current value between ▲/▼ buttons.
+    Scroll-wheel and click supported.
+    """
+    valueChanged = pyqtSignal(int)
+
+    def __init__(self, values: list[int], initial: int | None = None, fmt: str = "{:02d}"):
+        super().__init__()
+        self._values = values
+        self._fmt = fmt
+        self._idx = 0
+        if initial is not None and initial in values:
+            self._idx = values.index(initial)
+
+        self.setFixedWidth(72)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        self._btn_up = QPushButton("▲")
+        self._btn_up.setFixedHeight(28)
+        self._btn_up.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._btn_up.clicked.connect(self._step_up)
+
+        self._lbl = QLabel(self._formatted())
+        self._lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl.setFixedHeight(44)
+        font = QFont()
+        font.setPointSize(20)
+        font.setBold(True)
+        self._lbl.setFont(font)
+        self._lbl.setStyleSheet(
+            "color: #ffffff; background: #1e293b; border: 2px solid #3b82f6;"
+            " border-radius: 8px;"
+        )
+
+        self._btn_down = QPushButton("▼")
+        self._btn_down.setFixedHeight(28)
+        self._btn_down.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._btn_down.clicked.connect(self._step_down)
+
+        lay.addWidget(self._btn_up)
+        lay.addWidget(self._lbl)
+        lay.addWidget(self._btn_down)
+
+        for btn in (self._btn_up, self._btn_down):
+            btn.setStyleSheet(
+                "QPushButton { background: #334155; color: #94a3b8; border: none;"
+                " border-radius: 6px; font-size: 13px; }"
+                "QPushButton:hover { background: #3b82f6; color: white; }"
+                "QPushButton:pressed { background: #2563eb; }"
+            )
+
+    def _formatted(self) -> str:
+        return self._fmt.format(self._values[self._idx])
+
+    def _step_up(self):
+        self._idx = (self._idx - 1) % len(self._values)
+        self._lbl.setText(self._formatted())
+        self.valueChanged.emit(self._values[self._idx])
+
+    def _step_down(self):
+        self._idx = (self._idx + 1) % len(self._values)
+        self._lbl.setText(self._formatted())
+        self.valueChanged.emit(self._values[self._idx])
+
+    def wheelEvent(self, event: QWheelEvent):
+        if event.angleDelta().y() > 0:
+            self._step_up()
+        else:
+            self._step_down()
+
+    def value(self) -> int:
+        return self._values[self._idx]
+
+    def set_value(self, v: int):
+        if v in self._values:
+            self._idx = self._values.index(v)
+            self._lbl.setText(self._formatted())
+
+
+class DateTimePicker(QWidget):
+    """
+    Full-featured date + time picker.
+    - QCalendarWidget on the left (or collapsible)
+    - Two DrumRolls (hour 00-23, minute 00/05/10…55) on the right
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        now = datetime.now()
+        default = now + timedelta(hours=1)
+        # Round to next 5-min slot
+        rem = default.minute % 5
+        if rem:
+            default = default + timedelta(minutes=5 - rem)
+        default = default.replace(second=0, microsecond=0)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # ── Calendar ──────────────────────────────────────────────────
+        self.calendar = QCalendarWidget()
+        self.calendar.setGridVisible(True)
+        self.calendar.setMinimumDate(QDate.currentDate())
+        self.calendar.setSelectedDate(QDate(default.year, default.month, default.day))
+        self.calendar.setMaximumHeight(220)
+        self.calendar.setStyleSheet("""
+            QCalendarWidget {
+                background-color: #0f172a;
+                color: #e2e8f0;
+                border: 1px solid #334155;
+                border-radius: 10px;
+            }
+            QCalendarWidget QToolButton {
+                color: #e2e8f0;
+                background: #1e293b;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-weight: bold;
+            }
+            QCalendarWidget QToolButton:hover { background: #3b82f6; color: white; }
+            QCalendarWidget QMenu {
+                background: #1e293b; color: #e2e8f0;
+            }
+            QCalendarWidget QAbstractItemView:enabled {
+                background: #0f172a;
+                color: #e2e8f0;
+                selection-background-color: #3b82f6;
+                selection-color: white;
+            }
+            QCalendarWidget QAbstractItemView:disabled { color: #475569; }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: #1e293b;
+                border-radius: 8px 8px 0 0;
+            }
+        """)
+        layout.addWidget(self.calendar)
+
+        # ── Time row ──────────────────────────────────────────────────
+        time_frame = QFrame()
+        time_frame.setStyleSheet(
+            "background: #0f172a; border: 1px solid #334155;"
+            " border-radius: 10px; padding: 6px;"
+        )
+        time_row = QHBoxLayout(time_frame)
+        time_row.setContentsMargins(10, 6, 10, 6)
+        time_row.setSpacing(6)
+
+        lbl_time = QLabel("🕐 Hora:")
+        lbl_time.setStyleSheet("color: #94a3b8; font-size: 13px; background: transparent; border: none;")
+        time_row.addWidget(lbl_time)
+        time_row.addStretch()
+
+        self._drum_hour = DrumRoll(list(range(24)), initial=default.hour)
+        time_row.addWidget(self._drum_hour)
+
+        sep = QLabel(":")
+        sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sep.setStyleSheet("color: #94a3b8; font-size: 24px; font-weight: bold; background: transparent; border: none;")
+        time_row.addWidget(sep)
+
+        minutes = list(range(0, 60, 5))
+        min_initial = min(minutes, key=lambda m: abs(m - default.minute))
+        self._drum_min = DrumRoll(minutes, initial=min_initial)
+        time_row.addWidget(self._drum_min)
+
+        time_row.addStretch()
+        layout.addWidget(time_frame)
+
+        # ── Selected summary ──────────────────────────────────────────
+        self._lbl_summary = QLabel()
+        self._lbl_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_summary.setStyleSheet(
+            "color: #60a5fa; font-size: 13px; font-weight: bold;"
+        )
+        layout.addWidget(self._lbl_summary)
+
+        self._update_summary()
+        self.calendar.selectionChanged.connect(self._update_summary)
+        self._drum_hour.valueChanged.connect(lambda _: self._update_summary())
+        self._drum_min.valueChanged.connect(lambda _: self._update_summary())
+
+    def _update_summary(self):
+        dt = self.selected_datetime()
+        self._lbl_summary.setText(
+            f"📅  {dt.strftime('%A, %d/%m/%Y  às  %H:%M')}"
+        )
+
+    def selected_datetime(self) -> datetime:
+        qd = self.calendar.selectedDate()
+        return datetime(
+            qd.year(), qd.month(), qd.day(),
+            self._drum_hour.value(),
+            self._drum_min.value(),
+            0,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +426,7 @@ class UploadWidget(QWidget):
         # ── Schedule ──────────────────────────────────────────────────
         sched_group = QGroupBox("⏰ Agendamento")
         sched_layout = QVBoxLayout(sched_group)
-        sched_layout.setSpacing(6)
+        sched_layout.setSpacing(8)
 
         toggle_row = QHBoxLayout()
         self.radio_now = QRadioButton("Postar agora")
@@ -227,22 +440,14 @@ class UploadWidget(QWidget):
         toggle_row.addStretch()
         sched_layout.addLayout(toggle_row)
 
-        self.dt_frame = QFrame()
-        dt_row = QHBoxLayout(self.dt_frame)
-        dt_row.setContentsMargins(0, 0, 0, 0)
-        dt_row.addWidget(QLabel("Data e hora:"))
-        self.dt_picker = QDateTimeEdit()
-        self.dt_picker.setDisplayFormat("dd/MM/yyyy  HH:mm")
-        self.dt_picker.setDateTime(QDateTime.currentDateTime().addSecs(3600))
-        self.dt_picker.setCalendarPopup(True)
-        self.dt_picker.setMinimumDateTime(QDateTime.currentDateTime().addSecs(60))
-        dt_row.addWidget(self.dt_picker)
-        dt_row.addStretch()
-        self.dt_frame.setVisible(False)
-        self.radio_now.toggled.connect(lambda checked: self.dt_frame.setVisible(not checked))
-        sched_layout.addWidget(self.dt_frame)
+        # New custom date+time picker (hidden until "Agendar" is selected)
+        self.dt_picker = DateTimePicker()
+        self.dt_picker.setVisible(False)
+        self.radio_now.toggled.connect(lambda checked: self.dt_picker.setVisible(not checked))
+        sched_layout.addWidget(self.dt_picker)
 
         root.addWidget(sched_group)
+
 
         # ── Scheduled queue ───────────────────────────────────────────
         self.queue_group = QGroupBox("📋 Fila de Agendamentos")
@@ -443,8 +648,7 @@ class UploadWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _schedule_upload(self, account_name, video, description, hashtags, browser):
-        qt_dt = self.dt_picker.dateTime()
-        scheduled_dt = qt_dt.toPyDateTime()
+        scheduled_dt = self.dt_picker.selected_datetime()
 
         delta_ms = int((scheduled_dt - datetime.now()).total_seconds() * 1000)
         if delta_ms <= 0:
