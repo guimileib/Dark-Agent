@@ -402,8 +402,10 @@ class UploadWidget(QWidget):
 
         # ── Metadata ──────────────────────────────────────────────────
         meta_group = QGroupBox("📝 Detalhes do Vídeo")
+        meta_group.setMinimumHeight(200)
         meta_layout = QVBoxLayout(meta_group)
-        meta_layout.setSpacing(4)
+        meta_layout.setSpacing(8)
+        meta_layout.setContentsMargins(10, 14, 10, 10)
 
         meta_layout.addWidget(QLabel("Título:"))
         self.txt_title = QLineEdit()
@@ -413,7 +415,8 @@ class UploadWidget(QWidget):
         meta_layout.addWidget(QLabel("Legenda / Descrição:"))
         self.txt_caption = QTextEdit()
         self.txt_caption.setPlaceholderText("Texto que aparece abaixo do vídeo")
-        self.txt_caption.setMaximumHeight(72)
+        self.txt_caption.setMinimumHeight(72)
+        self.txt_caption.setMaximumHeight(90)
         meta_layout.addWidget(self.txt_caption)
 
         meta_layout.addWidget(QLabel("Hashtags (separadas por espaço):"))
