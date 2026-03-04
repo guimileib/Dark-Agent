@@ -270,10 +270,17 @@ class TikTokUploader:
         hashtags: list[str] | None = None,
         headless: bool = True,
         browser_name: str = "chrome",
+        schedule_time: str | None = None,
     ) -> bool:
         """
         Upload *video_path* to TikTok using the account's saved cookies.
         Works for all supported browsers (chrome, brave, firefox, edge).
+
+        Parameters
+        ----------
+        schedule_time : str | None
+            If given, tells TikTok Studio to schedule the post.
+            Format expected by tiktok_uploader: 'YYYY-MM-DD HH:MM:SS'
         """
         if not os.path.exists(video_path):
             self.logger.error(f"Video file not found: {video_path}")
@@ -286,14 +293,14 @@ class TikTokUploader:
             )
             return False
 
-        description = title
+        description = title or ""
         if hashtags:
-            description = f"{title} " + " ".join(
-                f"#{t.lstrip('#')}" for t in hashtags if t.strip()
-            )
+            tag_str = " ".join(f"#{t.lstrip('#')}" for t in hashtags if t.strip())
+            description = f"{description} {tag_str}".strip() if description else tag_str
 
         self.logger.info(
             f"Uploading '{video_path}' | account='{self.account_name}' | browser='{browser_name}'"
+            + (f" | scheduled={schedule_time}" if schedule_time else "")
         )
 
         driver = None
@@ -307,6 +314,8 @@ class TikTokUploader:
             auth = AuthBackend(cookies=self.cookies_path)
 
             video_dict = {"path": video_path, "description": description}
+            if schedule_time:
+                video_dict["schedule"] = schedule_time
 
             failed = upload_videos(
                 videos=[video_dict],

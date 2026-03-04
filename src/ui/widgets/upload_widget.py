@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from PyQt6.QtCore import (
-    Qt, QDate, QThread, QTimer, pyqtSignal, QDateTime, QSize,
+    Qt, QDate, QThread, QTimer, pyqtSignal, QSize,
 )
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QWheelEvent
 from PyQt6.QtWidgets import (
@@ -16,8 +16,10 @@ from PyQt6.QtWidgets import (
     QFileDialog, QFrame, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
     QPushButton, QRadioButton, QScrollArea, QSizePolicy,
-    QTextEdit, QVBoxLayout, QWidget,
+    QTextEdit, QVBoxLayout, QWidget, QSpinBox, QTimeEdit,
+    QDateEdit, QSplitter, QToolButton, QCheckBox,
 )
+from PyQt6.QtCore import QTime, QDate
 
 from core.uploader import (
     TikTokUploader,
@@ -30,15 +32,10 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Custom calendar + drum-roll time picker
+# Custom drum-roll widget (kept for standalone use)
 # ---------------------------------------------------------------------------
 
 class DrumRoll(QWidget):
-    """
-    A vertical 'drum-roll' selector.
-    Shows the current value between ▲/▼ buttons.
-    Scroll-wheel and click supported.
-    """
     valueChanged = pyqtSignal(int)
 
     def __init__(self, values: list[int], initial: int | None = None, fmt: str = "{:02d}"):
@@ -118,124 +115,254 @@ class DrumRoll(QWidget):
             self._lbl.setText(self._formatted())
 
 
-class DateTimePicker(QWidget):
-    """
-    Full-featured date + time picker.
-    - QCalendarWidget on the left (or collapsible)
-    - Two DrumRolls (hour 00-23, minute 00/05/10…55) on the right
-    """
+# ---------------------------------------------------------------------------
+# Compact inline date+time picker (like TikTok Studio)
+# ---------------------------------------------------------------------------
 
+class InlineDateTimePicker(QWidget):
+    """
+    Compact date + time picker — two QSpinBox-style rows mimicking TikTok Studio.
+    Shows: [🕐 HH:MM] [📅 DD/MM/YYYY]
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         now = datetime.now()
         default = now + timedelta(hours=1)
-        # Round to next 5-min slot
         rem = default.minute % 5
         if rem:
             default = default + timedelta(minutes=5 - rem)
         default = default.replace(second=0, microsecond=0)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 6, 0, 0)
         layout.setSpacing(8)
 
-        # ── Calendar ──────────────────────────────────────────────────
-        self.calendar = QCalendarWidget()
-        self.calendar.setGridVisible(True)
-        self.calendar.setMinimumDate(QDate.currentDate())
-        self.calendar.setSelectedDate(QDate(default.year, default.month, default.day))
-        self.calendar.setMaximumHeight(220)
-        self.calendar.setStyleSheet("""
-            QCalendarWidget {
-                background-color: #0f172a;
-                color: #e2e8f0;
-                border: 1px solid #334155;
-                border-radius: 10px;
-            }
-            QCalendarWidget QToolButton {
-                color: #e2e8f0;
-                background: #1e293b;
-                border: none;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-weight: bold;
-            }
-            QCalendarWidget QToolButton:hover { background: #3b82f6; color: white; }
-            QCalendarWidget QMenu {
-                background: #1e293b; color: #e2e8f0;
-            }
-            QCalendarWidget QAbstractItemView:enabled {
-                background: #0f172a;
-                color: #e2e8f0;
-                selection-background-color: #3b82f6;
-                selection-color: white;
-            }
-            QCalendarWidget QAbstractItemView:disabled { color: #475569; }
-            QCalendarWidget QWidget#qt_calendar_navigationbar {
-                background: #1e293b;
-                border-radius: 8px 8px 0 0;
-            }
-        """)
-        layout.addWidget(self.calendar)
+        # ── Row: time + date side by side (like TikTok) ──────────────
+        row = QHBoxLayout()
+        row.setSpacing(12)
 
-        # ── Time row ──────────────────────────────────────────────────
+        # Time picker
         time_frame = QFrame()
         time_frame.setStyleSheet(
-            "background: #0f172a; border: 1px solid #334155;"
-            " border-radius: 10px; padding: 6px;"
+            "QFrame { background: #1e293b; border: 1px solid #334155; border-radius: 8px; }"
         )
-        time_row = QHBoxLayout(time_frame)
-        time_row.setContentsMargins(10, 6, 10, 6)
-        time_row.setSpacing(6)
+        time_layout = QHBoxLayout(time_frame)
+        time_layout.setContentsMargins(10, 6, 10, 6)
+        time_layout.setSpacing(4)
 
-        lbl_time = QLabel("🕐 Hora:")
-        lbl_time.setStyleSheet("color: #94a3b8; font-size: 13px; background: transparent; border: none;")
-        time_row.addWidget(lbl_time)
-        time_row.addStretch()
+        lbl_t = QLabel("🕐")
+        lbl_t.setStyleSheet("color: #94a3b8; background: transparent; border: none; font-size: 16px;")
+        time_layout.addWidget(lbl_t)
 
-        self._drum_hour = DrumRoll(list(range(24)), initial=default.hour)
-        time_row.addWidget(self._drum_hour)
+        self._time_edit = QTimeEdit()
+        self._time_edit.setTime(QTime(default.hour, default.minute))
+        self._time_edit.setDisplayFormat("HH:mm")
+        self._time_edit.setStyleSheet(
+            "QTimeEdit { background: transparent; border: none; color: #e2e8f0;"
+            " font-size: 16px; font-weight: bold; }"
+            "QTimeEdit::up-button { width: 16px; }"
+            "QTimeEdit::down-button { width: 16px; }"
+        )
+        time_layout.addWidget(self._time_edit)
+        row.addWidget(time_frame)
 
-        sep = QLabel(":")
-        sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sep.setStyleSheet("color: #94a3b8; font-size: 24px; font-weight: bold; background: transparent; border: none;")
-        time_row.addWidget(sep)
+        # Date picker
+        date_frame = QFrame()
+        date_frame.setStyleSheet(
+            "QFrame { background: #1e293b; border: 1px solid #334155; border-radius: 8px; }"
+        )
+        date_layout = QHBoxLayout(date_frame)
+        date_layout.setContentsMargins(10, 6, 10, 6)
+        date_layout.setSpacing(4)
 
-        minutes = list(range(0, 60, 5))
-        min_initial = min(minutes, key=lambda m: abs(m - default.minute))
-        self._drum_min = DrumRoll(minutes, initial=min_initial)
-        time_row.addWidget(self._drum_min)
+        lbl_d = QLabel("📅")
+        lbl_d.setStyleSheet("color: #94a3b8; background: transparent; border: none; font-size: 16px;")
+        date_layout.addWidget(lbl_d)
 
-        time_row.addStretch()
-        layout.addWidget(time_frame)
+        self._date_edit = QDateEdit()
+        self._date_edit.setDate(QDate(default.year, default.month, default.day))
+        self._date_edit.setDisplayFormat("dd/MM/yyyy")
+        self._date_edit.setMinimumDate(QDate.currentDate())
+        self._date_edit.setCalendarPopup(True)
+        self._date_edit.setStyleSheet(
+            "QDateEdit { background: transparent; border: none; color: #e2e8f0;"
+            " font-size: 16px; font-weight: bold; }"
+            "QDateEdit::up-button { width: 16px; }"
+            "QDateEdit::down-button { width: 16px; }"
+            "QDateEdit::drop-down { subcontrol-origin: padding; subcontrol-position: right center;"
+            " width: 20px; border: none; }"
+        )
+        date_layout.addWidget(self._date_edit)
+        row.addWidget(date_frame)
+        row.addStretch()
 
-        # ── Selected summary ──────────────────────────────────────────
+        layout.addLayout(row)
+
+        # Summary label
         self._lbl_summary = QLabel()
-        self._lbl_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_summary.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self._lbl_summary.setStyleSheet(
-            "color: #60a5fa; font-size: 13px; font-weight: bold;"
+            "color: #60a5fa; font-size: 12px; font-weight: bold; background: transparent;"
         )
         layout.addWidget(self._lbl_summary)
-
         self._update_summary()
-        self.calendar.selectionChanged.connect(self._update_summary)
-        self._drum_hour.valueChanged.connect(lambda _: self._update_summary())
-        self._drum_min.valueChanged.connect(lambda _: self._update_summary())
+
+        self._time_edit.timeChanged.connect(lambda _: self._update_summary())
+        self._date_edit.dateChanged.connect(lambda _: self._update_summary())
 
     def _update_summary(self):
         dt = self.selected_datetime()
         self._lbl_summary.setText(
-            f"📅  {dt.strftime('%A, %d/%m/%Y  às  %H:%M')}"
+            f"📌  Agendado para: {dt.strftime('%A, %d/%m/%Y às %H:%M')}"
         )
 
     def selected_datetime(self) -> datetime:
-        qd = self.calendar.selectedDate()
-        return datetime(
-            qd.year(), qd.month(), qd.day(),
-            self._drum_hour.value(),
-            self._drum_min.value(),
-            0,
+        qd = self._date_edit.date()
+        qt = self._time_edit.time()
+        return datetime(qd.year(), qd.month(), qd.day(), qt.hour(), qt.minute(), 0)
+
+
+# ---------------------------------------------------------------------------
+# Hashtag chip widget
+# ---------------------------------------------------------------------------
+
+class HashtagBar(QWidget):
+    """
+    Shows added hashtags as removable chips — like TikTok Studio.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tags: list[str] = []
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+
+        # Input row
+        input_row = QHBoxLayout()
+        input_row.setSpacing(6)
+
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("# Adicionar hashtag  (Enter para confirmar)")
+        self._input.setStyleSheet(
+            "QLineEdit { background: #0f172a; border: 1px solid #334155; border-radius: 8px;"
+            " color: #e2e8f0; padding: 6px 10px; font-size: 13px; }"
+            "QLineEdit:focus { border-color: #3b82f6; }"
         )
+        self._input.returnPressed.connect(self._add_from_input)
+        input_row.addWidget(self._input)
+
+        btn_add = QPushButton("+ Add")
+        btn_add.setFixedWidth(60)
+        btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_add.setStyleSheet(
+            "QPushButton { background: #3b82f6; color: white; border: none;"
+            " border-radius: 8px; padding: 6px; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { background: #2563eb; }"
+        )
+        btn_add.clicked.connect(self._add_from_input)
+        input_row.addWidget(btn_add)
+        outer.addLayout(input_row)
+
+        # Chips scroll area
+        self._chip_area = QWidget()
+        self._chip_layout = QHBoxLayout(self._chip_area)
+        self._chip_layout.setContentsMargins(0, 0, 0, 0)
+        self._chip_layout.setSpacing(6)
+        self._chip_layout.addStretch()
+
+        scroll = QScrollArea()
+        scroll.setWidget(self._chip_area)
+        scroll.setWidgetResizable(True)
+        scroll.setFixedHeight(46)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+            "QScrollBar:horizontal { height: 4px; background: #1e293b; border-radius: 2px; }"
+            "QScrollBar::handle:horizontal { background: #334155; border-radius: 2px; }"
+        )
+        outer.addWidget(scroll)
+
+        # Predefined suggestions
+        suggestion_row = QHBoxLayout()
+        suggestion_row.setSpacing(4)
+        lbl_sug = QLabel("Sugestões:")
+        lbl_sug.setStyleSheet("color: #64748b; font-size: 11px; background: transparent;")
+        suggestion_row.addWidget(lbl_sug)
+        for tag in ["#fyp", "#viral", "#foryou", "#trending", "#fy"]:
+            btn = QPushButton(tag)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton { background: #1e293b; color: #94a3b8; border: 1px solid #334155;"
+                " border-radius: 12px; padding: 2px 8px; font-size: 11px; }"
+                "QPushButton:hover { background: #334155; color: #e2e8f0; }"
+            )
+            btn.clicked.connect(lambda checked, t=tag: self._add_tag(t))
+            suggestion_row.addWidget(btn)
+        suggestion_row.addStretch()
+        outer.addLayout(suggestion_row)
+
+    def _add_from_input(self):
+        text = self._input.text().strip()
+        if text:
+            for t in text.split():
+                self._add_tag(t)
+            self._input.clear()
+
+    def _add_tag(self, raw: str):
+        tag = "#" + raw.lstrip("#")
+        if tag in self._tags:
+            return
+        self._tags.append(tag)
+        self._rebuild_chips()
+
+    def _rebuild_chips(self):
+        # Remove all except the stretch at end
+        while self._chip_layout.count() > 1:
+            item = self._chip_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for tag in self._tags:
+            chip = QFrame()
+            chip.setStyleSheet(
+                "QFrame { background: #1e3a5f; border: 1px solid #3b82f6;"
+                " border-radius: 12px; padding: 2px 4px; }"
+            )
+            chip_row = QHBoxLayout(chip)
+            chip_row.setContentsMargins(6, 2, 2, 2)
+            chip_row.setSpacing(2)
+
+            lbl = QLabel(tag)
+            lbl.setStyleSheet("color: #93c5fd; font-size: 12px; font-weight: bold; border: none; background: transparent;")
+            chip_row.addWidget(lbl)
+
+            close_btn = QPushButton("✕")
+            close_btn.setFixedSize(16, 16)
+            close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            close_btn.setStyleSheet(
+                "QPushButton { background: transparent; border: none; color: #64748b; font-size: 10px; }"
+                "QPushButton:hover { color: #ef4444; }"
+            )
+            close_btn.clicked.connect(lambda _, t=tag: self._remove_tag(t))
+            chip_row.addWidget(close_btn)
+
+            # Insert before the stretch
+            self._chip_layout.insertWidget(self._chip_layout.count() - 1, chip)
+
+    def _remove_tag(self, tag: str):
+        if tag in self._tags:
+            self._tags.remove(tag)
+            self._rebuild_chips()
+
+    def get_tags(self) -> list[str]:
+        """Return list of hashtag strings without the '#' prefix."""
+        return [t.lstrip("#") for t in self._tags]
+
+    def clear(self):
+        self._tags.clear()
+        self._rebuild_chips()
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +401,7 @@ class UploaderThread(QThread):
         hashtags: list[str],
         browser: str,
         headless: bool = True,
+        schedule_time: str | None = None,
     ):
         super().__init__()
         self.account_name = account_name
@@ -282,20 +410,29 @@ class UploaderThread(QThread):
         self.hashtags = hashtags
         self.browser = browser
         self.headless = headless
+        self.schedule_time = schedule_time
 
     def run(self):
         uploader = TikTokUploader(self.account_name)
         try:
-            self.progress.emit(f"🚀 Iniciando upload com conta '{self.account_name}'…")
+            if self.schedule_time:
+                self.progress.emit(f"⏰ Agendando upload com conta '{self.account_name}' para {self.schedule_time}…")
+            else:
+                self.progress.emit(f"🚀 Iniciando upload com conta '{self.account_name}'…")
+
             ok = uploader.upload(
                 video_path=self.video_path,
                 title=self.description,
                 hashtags=self.hashtags,
                 headless=self.headless,
                 browser_name=self.browser,
+                schedule_time=self.schedule_time,
             )
             if ok:
-                self.finished.emit(True, "Upload realizado com sucesso!")
+                if self.schedule_time:
+                    self.finished.emit(True, f"Post agendado com sucesso para {self.schedule_time}!")
+                else:
+                    self.finished.emit(True, "Upload realizado com sucesso!")
             else:
                 self.finished.emit(False, "Falha no upload. Verifique os cookies e o arquivo.")
         except Exception as exc:
@@ -303,7 +440,7 @@ class UploaderThread(QThread):
 
 
 # ---------------------------------------------------------------------------
-# Scheduled post data class
+# Scheduled post data class (kept for local-timer fallback)
 # ---------------------------------------------------------------------------
 
 class ScheduledPost:
@@ -346,9 +483,8 @@ class UploadWidget(QWidget):
         acc_group = QGroupBox("👤 Contas TikTok")
         acc_layout = QVBoxLayout(acc_group)
 
-        # List of connected accounts
         self.account_list = QListWidget()
-        self.account_list.setFixedHeight(110)
+        self.account_list.setFixedHeight(100)
         self.account_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         acc_layout.addWidget(self.account_list)
 
@@ -361,7 +497,6 @@ class UploadWidget(QWidget):
         acc_btn_row.addWidget(self.btn_remove_account)
         acc_layout.addLayout(acc_btn_row)
 
-        # Status label for selected account
         self.lbl_account_status = QLabel("Selecione uma conta na lista acima.")
         self.lbl_account_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         acc_layout.addWidget(self.lbl_account_status)
@@ -384,7 +519,8 @@ class UploadWidget(QWidget):
 
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.file_list.setMinimumHeight(80)
+        self.file_list.setMinimumHeight(70)
+        self.file_list.setMaximumHeight(100)
         file_layout.addWidget(self.file_list)
 
         file_btn_row = QHBoxLayout()
@@ -402,63 +538,101 @@ class UploadWidget(QWidget):
 
         # ── Metadata ──────────────────────────────────────────────────
         meta_group = QGroupBox("📝 Detalhes do Vídeo")
-        meta_group.setMinimumHeight(200)
         meta_layout = QVBoxLayout(meta_group)
         meta_layout.setSpacing(8)
         meta_layout.setContentsMargins(10, 14, 10, 10)
 
-        meta_layout.addWidget(QLabel("Título:"))
+        # Title (optional note)
+        title_row = QHBoxLayout()
+        lbl_title = QLabel("Título:")
+        lbl_title.setStyleSheet("font-weight: bold;")
+        title_row.addWidget(lbl_title)
+        lbl_optional_title = QLabel("(opcional)")
+        lbl_optional_title.setStyleSheet("color: #64748b; font-size: 11px;")
+        title_row.addWidget(lbl_optional_title)
+        title_row.addStretch()
+        meta_layout.addLayout(title_row)
+
         self.txt_title = QLineEdit()
-        self.txt_title.setPlaceholderText("Título curto do vídeo")
+        self.txt_title.setPlaceholderText("Título curto do vídeo…")
+        self.txt_title.setStyleSheet(
+            "QLineEdit { background: #0f172a; border: 1px solid #334155; border-radius: 8px;"
+            " color: #e2e8f0; padding: 6px 10px; font-size: 13px; }"
+            "QLineEdit:focus { border-color: #3b82f6; }"
+        )
         meta_layout.addWidget(self.txt_title)
 
-        meta_layout.addWidget(QLabel("Legenda / Descrição:"))
+        # Description (optional — TikTok doesn't require it)
+        desc_row = QHBoxLayout()
+        lbl_desc = QLabel("Descrição:")
+        lbl_desc.setStyleSheet("font-weight: bold;")
+        desc_row.addWidget(lbl_desc)
+        lbl_optional = QLabel("(opcional — até 4000 caracteres)")
+        lbl_optional.setStyleSheet("color: #64748b; font-size: 11px;")
+        desc_row.addWidget(lbl_optional)
+        desc_row.addStretch()
+        self._char_counter = QLabel("0/4000")
+        self._char_counter.setStyleSheet("color: #64748b; font-size: 11px;")
+        desc_row.addWidget(self._char_counter)
+        meta_layout.addLayout(desc_row)
+
         self.txt_caption = QTextEdit()
-        self.txt_caption.setPlaceholderText("Texto que aparece abaixo do vídeo")
-        self.txt_caption.setMinimumHeight(72)
+        self.txt_caption.setPlaceholderText("Texto que aparece abaixo do vídeo (opcional)…")
+        self.txt_caption.setMinimumHeight(68)
         self.txt_caption.setMaximumHeight(90)
+        self.txt_caption.setStyleSheet(
+            "QTextEdit { background: #0f172a; border: 1px solid #334155; border-radius: 8px;"
+            " color: #e2e8f0; padding: 6px 10px; font-size: 13px; }"
+            "QTextEdit:focus { border-color: #3b82f6; }"
+        )
+        self.txt_caption.textChanged.connect(self._on_caption_changed)
         meta_layout.addWidget(self.txt_caption)
 
-        meta_layout.addWidget(QLabel("Hashtags (separadas por espaço):"))
-        self.txt_hashtags = QLineEdit()
-        self.txt_hashtags.setPlaceholderText("Ex: #fy #viral #darkagent")
-        meta_layout.addWidget(self.txt_hashtags)
+        # Hashtags chip bar
+        lbl_ht = QLabel("# Hashtags:")
+        lbl_ht.setStyleSheet("font-weight: bold;")
+        meta_layout.addWidget(lbl_ht)
+
+        self.hashtag_bar = HashtagBar()
+        meta_layout.addWidget(self.hashtag_bar)
 
         root.addWidget(meta_group)
 
         # ── Schedule ──────────────────────────────────────────────────
-        sched_group = QGroupBox("⏰ Agendamento")
+        sched_group = QGroupBox("⏰ Quando Publicar")
         sched_layout = QVBoxLayout(sched_group)
         sched_layout.setSpacing(8)
 
         toggle_row = QHBoxLayout()
-        self.radio_now = QRadioButton("Postar agora")
-        self.radio_later = QRadioButton("Agendar para depois")
+        self.radio_now = QRadioButton("🟢  Agora")
+        self.radio_later = QRadioButton("📅  Programar")
         self.radio_now.setChecked(True)
         mode_grp = QButtonGroup(self)
         mode_grp.addButton(self.radio_now)
         mode_grp.addButton(self.radio_later)
+        self.radio_now.setStyleSheet("QRadioButton { font-size: 13px; font-weight: bold; }")
+        self.radio_later.setStyleSheet("QRadioButton { font-size: 13px; font-weight: bold; }")
         toggle_row.addWidget(self.radio_now)
+        toggle_row.addSpacing(20)
         toggle_row.addWidget(self.radio_later)
         toggle_row.addStretch()
         sched_layout.addLayout(toggle_row)
 
-        # New custom date+time picker (hidden until "Agendar" is selected)
-        self.dt_picker = DateTimePicker()
+        # Inline date+time picker (hidden until "Programar" selected)
+        self.dt_picker = InlineDateTimePicker()
         self.dt_picker.setVisible(False)
         self.radio_now.toggled.connect(lambda checked: self.dt_picker.setVisible(not checked))
         sched_layout.addWidget(self.dt_picker)
 
         root.addWidget(sched_group)
 
-
         # ── Scheduled queue ───────────────────────────────────────────
         self.queue_group = QGroupBox("📋 Fila de Agendamentos")
         queue_layout = QVBoxLayout(self.queue_group)
 
         self.queue_list = QListWidget()
-        self.queue_list.setMinimumHeight(60)
-        self.queue_list.setMaximumHeight(120)
+        self.queue_list.setMinimumHeight(50)
+        self.queue_list.setMaximumHeight(100)
         queue_layout.addWidget(self.queue_list)
 
         btn_cancel = QPushButton("Cancelar Selecionado")
@@ -472,23 +646,39 @@ class UploadWidget(QWidget):
         self.btn_upload = QPushButton("🚀 Enviar para TikTok")
         self.btn_upload.setMinimumHeight(50)
         self.btn_upload.setStyleSheet(
-            "font-size: 16px; font-weight: bold; background-color: #E91E63; color: white;"
+            "QPushButton { font-size: 16px; font-weight: bold; background-color: #E91E63;"
+            " color: white; border-radius: 10px; }"
+            "QPushButton:hover { background-color: #c2185b; }"
+            "QPushButton:disabled { background-color: #4a4a4a; color: #888; }"
         )
         self.btn_upload.clicked.connect(self._handle_action)
         root.addWidget(self.btn_upload)
 
         self.lbl_progress = QLabel("")
         self.lbl_progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_progress.setWordWrap(True)
+        self.lbl_progress.setStyleSheet("font-size: 12px; color: #94a3b8;")
         root.addWidget(self.lbl_progress)
 
         root.addStretch()
+
+    # ------------------------------------------------------------------
+    # Caption char counter
+    # ------------------------------------------------------------------
+
+    def _on_caption_changed(self):
+        n = len(self.txt_caption.toPlainText())
+        self._char_counter.setText(f"{n}/4000")
+        if n > 4000:
+            self._char_counter.setStyleSheet("color: #ef4444; font-size: 11px;")
+        else:
+            self._char_counter.setStyleSheet("color: #64748b; font-size: 11px;")
 
     # ------------------------------------------------------------------
     # Account management
     # ------------------------------------------------------------------
 
     def _refresh_accounts(self):
-        """Reload the account list from disk and update the UI."""
         self.account_list.clear()
         accounts = list_accounts()
         for acc in accounts:
@@ -498,9 +688,7 @@ class UploadWidget(QWidget):
 
         if accounts:
             self.account_list.setCurrentRow(0)
-            self.lbl_account_status.setText(
-                f"Conta ativa: {accounts[0]['name']}"
-            )
+            self.lbl_account_status.setText(f"Conta ativa: {accounts[0]['name']}")
         else:
             self.lbl_account_status.setText("Nenhuma conta conectada. Clique em '➕ Adicionar Conta'.")
 
@@ -602,20 +790,26 @@ class UploadWidget(QWidget):
             QMessageBox.warning(self, "Erro", "Arquivo de vídeo não encontrado!")
             return
 
+        # Description is OPTIONAL on TikTok
         caption = self.txt_caption.toPlainText().strip()
-        if not caption:
-            QMessageBox.warning(self, "Erro", "Insira uma legenda/descrição!")
-            return
-
         title = self.txt_title.text().strip()
-        final_description = f"{title}. {caption}" if title else caption
-        hashtags = [t.lstrip("#") for t in self.txt_hashtags.text().split() if t.strip()]
+
+        # Build final description: title (if any) + caption (if any)
+        if title and caption:
+            final_description = f"{title}. {caption}"
+        elif title:
+            final_description = title
+        else:
+            final_description = caption  # may be empty — TikTok allows it
+
+        hashtags = self.hashtag_bar.get_tags()
         browser = self.combo_browser.currentText()
 
         if self.radio_now.isChecked():
             self._start_upload(account_name, video, final_description, hashtags, browser)
         else:
-            self._schedule_upload(account_name, video, final_description, hashtags, browser)
+            # Use TikTok-native scheduling (send to TikTok Studio with schedule time)
+            self._start_scheduled_upload(account_name, video, final_description, hashtags, browser)
 
     # ------------------------------------------------------------------
     # Immediate upload
@@ -623,7 +817,7 @@ class UploadWidget(QWidget):
 
     def _start_upload(self, account_name, video, description, hashtags, browser):
         self.btn_upload.setEnabled(False)
-        self.lbl_progress.setText("🔄 Iniciando upload (browser oculto)…")
+        self.lbl_progress.setText("🔄 Iniciando upload…")
 
         self.upload_thread = UploaderThread(
             account_name=account_name,
@@ -632,6 +826,7 @@ class UploadWidget(QWidget):
             hashtags=hashtags,
             browser=browser,
             headless=True,
+            schedule_time=None,
         )
         self.upload_thread.progress.connect(self.lbl_progress.setText)
         self.upload_thread.finished.connect(self._upload_done)
@@ -647,53 +842,52 @@ class UploadWidget(QWidget):
             self.lbl_progress.setText("❌ Falha no upload")
 
     # ------------------------------------------------------------------
-    # Scheduling
+    # TikTok-native scheduling (sends to TikTok Studio to be published)
     # ------------------------------------------------------------------
 
-    def _schedule_upload(self, account_name, video, description, hashtags, browser):
+    def _start_scheduled_upload(self, account_name, video, description, hashtags, browser):
+        """Upload the video to TikTok Studio with the native schedule date."""
         scheduled_dt = self.dt_picker.selected_datetime()
 
-        delta_ms = int((scheduled_dt - datetime.now()).total_seconds() * 1000)
-        if delta_ms <= 0:
-            QMessageBox.warning(self, "Aviso", "A data/hora agendada deve ser no futuro!")
+        # Validate: must be at least 15 minutes in the future (TikTok requirement)
+        delta_s = (scheduled_dt - datetime.now()).total_seconds()
+        if delta_s < 15 * 60:
+            QMessageBox.warning(
+                self,
+                "Aviso",
+                "O TikTok exige que o agendamento seja pelo menos 15 minutos no futuro!",
+            )
             return
 
-        timer = QTimer(self)
+        # Format for tiktok_uploader: 'YYYY-MM-DD HH:MM:SS'
+        schedule_str = scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        self.btn_upload.setEnabled(False)
+        self.lbl_progress.setText(f"⏰ Enviando e agendando para {scheduled_dt.strftime('%d/%m/%Y %H:%M')}…")
+
+        self.upload_thread = UploaderThread(
+            account_name=account_name,
+            video_path=video,
+            description=description,
+            hashtags=hashtags,
+            browser=browser,
+            headless=True,
+            schedule_time=schedule_str,
+        )
+        self.upload_thread.progress.connect(self.lbl_progress.setText)
+        self.upload_thread.finished.connect(self._upload_done)
+        self.upload_thread.start()
+
+        # Also add to local queue display so user can track it
+        timer = QTimer(self)   # dummy timer (won't fire, TikTok handles it)
         timer.setSingleShot(True)
         post = ScheduledPost(account_name, video, description, hashtags, browser, scheduled_dt, timer)
         self._scheduled_posts.append(post)
-        timer.timeout.connect(lambda p=post: self._fire_scheduled(p))
-        timer.start(delta_ms)
-
-        self._refresh_queue_ui()
-        self.lbl_progress.setText(
-            f"⏰ Agendado para {scheduled_dt.strftime('%d/%m/%Y %H:%M')} | conta: {account_name}"
-        )
-
-    def _fire_scheduled(self, post: ScheduledPost):
-        logger.info(f"Firing scheduled upload: {post.video_path} (account={post.account_name})")
-        post.upload_thread = UploaderThread(
-            account_name=post.account_name,
-            video_path=post.video_path,
-            description=post.description,
-            hashtags=post.hashtags,
-            browser=post.browser,
-            headless=True,
-        )
-        post.upload_thread.finished.connect(
-            lambda ok, msg, p=post: self._scheduled_done(ok, msg, p)
-        )
-        post.upload_thread.start()
         self._refresh_queue_ui()
 
-    def _scheduled_done(self, success: bool, msg: str, post: ScheduledPost):
-        if post in self._scheduled_posts:
-            self._scheduled_posts.remove(post)
-        self._refresh_queue_ui()
-        icon = "✅" if success else "❌"
-        self.lbl_progress.setText(
-            f"{icon} Upload agendado '{Path(post.video_path).name}' ({post.account_name}): {msg}"
-        )
+    # ------------------------------------------------------------------
+    # Queue display helpers
+    # ------------------------------------------------------------------
 
     def _cancel_selected(self):
         idx = self.queue_list.currentRow()
@@ -703,7 +897,7 @@ class UploadWidget(QWidget):
         post.timer.stop()
         self._scheduled_posts.pop(idx)
         self._refresh_queue_ui()
-        self.lbl_progress.setText("🗑️ Agendamento cancelado.")
+        self.lbl_progress.setText("🗑️ Entrada removida da fila.")
 
     def _refresh_queue_ui(self):
         self.queue_list.clear()
@@ -724,7 +918,7 @@ class UploadWidget(QWidget):
             name = Path(post.video_path).name
             dt_str = post.scheduled_dt.strftime("%d/%m %H:%M")
             if total_s <= 0:
-                item.setText(f"🔄 Enviando… — [{post.account_name}] {name}")
+                item.setText(f"✅ Agendado no TikTok — [{post.account_name}] {name}")
             else:
                 h, rem = divmod(total_s, 3600)
                 m, s = divmod(rem, 60)
