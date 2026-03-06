@@ -3,27 +3,47 @@ TikTokUploader — multi-account, multi-browser upload core.
 
 Cookies are stored per account as:
     <cookies_dir>/cookies_<account_name>.txt
+
+Anti-detection strategy:
+  - Chrome/Brave: undetected-chromedriver (uc) patches the binary-level
+    Selenium fingerprints that TikTok's bot-detection reads.
+  - All browsers: JS patches for navigator.webdriver, plugins, etc.
+  - Human-like random delays between actions.
+  - Uploads always run non-headless (TikTok aggressively blocks headless).
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import random
 import re
 import subprocess
 import time
 from pathlib import Path
 
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.chrome.service import Service as ChromeService
+# Standard Selenium (used for Firefox / Edge)
 from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 from selenium.webdriver.firefox.service import Service as FirefoxService
-from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.firefox import GeckoDriverManager
 from webdriver_manager.microsoft import EdgeChromiumDriverManager
+
+# undetected-chromedriver — used for Chrome & Brave
+try:
+    import undetected_chromedriver as uc
+    _UC_AVAILABLE = True
+except ImportError:
+    _UC_AVAILABLE = False
+    # Fallback to plain selenium Chrome if uc is missing
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.chrome.service import Service as ChromeService
+    from webdriver_manager.chrome import ChromeDriverManager
+
+# Always import selenium webdriver for Firefox/Edge
+from selenium import webdriver
 
 logger = logging.getLogger("DarkAgent.Uploader")
 
@@ -86,13 +106,114 @@ def remove_account(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Anti-detection helpers
+# ---------------------------------------------------------------------------
+
+# JS injected into every page to mask Selenium/WebDriver fingerprints
+_STEALTH_JS = """
+// 1. Remove navigator.webdriver flag
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+
+// 2. Spoof plugins — a real browser always has some
+Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+        const arr = [1, 2, 3, 4, 5];
+        arr.__proto__ = PluginArray.prototype;
+        return arr;
+    }
+});
+
+// 3. Spoof languages
+Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt', 'en-US', 'en']});
+
+// 4. Spoof hardware concurrency (real CPUs)
+Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+
+// 5. Spoof device memory
+Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+
+// 6. Mock chrome runtime so the page thinks it's a real Chrome
+window.chrome = {runtime: {}};
+
+// 7. Remove automation-specific permission overrides
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) =>
+    parameters.name === 'notifications'
+        ? Promise.resolve({state: Notification.permission})
+        : originalQuery(parameters);
+"""
+
+
+def _apply_stealth_js(driver) -> None:
+    """Execute anti-fingerprint JS on the current page."""
+    try:
+        driver.execute_script(_STEALTH_JS)
+    except Exception as exc:
+        logger.debug(f"stealth JS injection skipped: {exc}")
+
+
+def _apply_stealth_cdp(driver) -> None:
+    """Apply Chrome DevTools Protocol patches (only works with uc / Chrome)."""
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": _STEALTH_JS},
+        )
+        logger.debug("CDP stealth script registered.")
+    except Exception as exc:
+        logger.debug(f"CDP stealth patch skipped: {exc}")
+
+
+def _human_delay(min_s: float = 0.8, max_s: float = 2.2) -> None:
+    """Sleep for a random human-like duration."""
+    time.sleep(random.uniform(min_s, max_s))
+
+
+# ---------------------------------------------------------------------------
 # Driver factory
 # ---------------------------------------------------------------------------
 
-def _make_driver(browser_name: str, headless: bool = False) -> webdriver.Remote:
-    """Build and return a Selenium WebDriver for the requested browser."""
+def _find_brave_path() -> str | None:
+    """Locate the Brave executable on Windows."""
+    candidates = []
+    for env_key in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        val = os.environ.get(env_key, "")
+        if val:
+            candidates.append(
+                os.path.join(val, "BraveSoftware", "Brave-Browser", "Application", "brave.exe")
+            )
+    return next((p for p in candidates if os.path.exists(p)), None)
+
+
+def _brave_major_version(brave_path: str) -> str | None:
+    """Return the major version number string of the Brave binary."""
+    try:
+        out = subprocess.check_output(
+            [brave_path, "--version"], stderr=subprocess.DEVNULL
+        ).decode().strip()
+        m = re.search(r"(\d+)\.\d+\.\d+\.\d+", out)
+        if m:
+            logger.info(f"Brave version major: {m.group(1)}")
+            return m.group(1)
+    except Exception as exc:
+        logger.warning(f"Could not detect Brave version: {exc}")
+    return None
+
+
+def _make_driver(browser_name: str, headless: bool = False):
+    """
+    Build and return a WebDriver for the requested browser.
+
+    Chrome & Brave always use undetected-chromedriver (uc) when available,
+    which patches the driver binary to remove all Selenium fingerprints.
+    Firefox and Edge fall back to standard Selenium.
+
+    NOTE: TikTok aggressively detects headless Chrome — uploads should
+    always use headless=False (enforced in TikTokUploader.upload()).
+    """
     browser_name = browser_name.lower()
 
+    # ── Firefox ─────────────────────────────────────────────────────────
     if browser_name == "firefox":
         options = FirefoxOptions()
         options.set_preference("dom.webdriver.enabled", False)
@@ -100,18 +221,67 @@ def _make_driver(browser_name: str, headless: bool = False) -> webdriver.Remote:
         if headless:
             options.add_argument("--headless")
         service = FirefoxService(GeckoDriverManager().install())
-        return webdriver.Firefox(service=service, options=options)
+        driver = webdriver.Firefox(service=service, options=options)
+        _apply_stealth_js(driver)
+        return driver
 
+    # ── Edge ────────────────────────────────────────────────────────────
     if browser_name == "edge":
         options = EdgeOptions()
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--start-maximized")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
         if headless:
             options.add_argument("--headless=new")
         service = EdgeService(EdgeChromiumDriverManager().install())
-        return webdriver.Edge(service=service, options=options)
+        driver = webdriver.Edge(service=service, options=options)
+        _apply_stealth_cdp(driver)
+        return driver
 
-    # Chrome or Brave — both use the ChromeDriver
+    # ── Chrome / Brave — undetected-chromedriver ────────────────────────
+    if _UC_AVAILABLE:
+        options = uc.ChromeOptions()
+        options.add_argument("--start-maximized")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        # Extra args that help bypass bot-score checks
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--disable-notifications")
+        options.add_argument("--lang=pt-BR")
+
+        brave_path = None
+        version_main = None
+
+        if browser_name == "brave":
+            brave_path = _find_brave_path()
+            if brave_path:
+                options.binary_location = brave_path
+                logger.info(f"Brave found at: {brave_path}")
+                version_main_str = _brave_major_version(brave_path)
+                if version_main_str:
+                    version_main = int(version_main_str)
+            else:
+                logger.warning("Brave binary not found — falling back to Chrome.")
+
+        driver = uc.Chrome(
+            options=options,
+            headless=headless,          # uc handles headless safely
+            version_main=version_main,  # None → auto-detect from installed Chrome
+            use_subprocess=True,        # avoids process zombie issues on Windows
+        )
+
+        # Register stealth JS to run on every new page (CDP-level)
+        _apply_stealth_cdp(driver)
+        logger.info(f"[uc] {'Brave' if brave_path else 'Chrome'} driver started (headless={headless}).")
+        return driver
+
+    # ── Fallback: plain Selenium Chrome (uc not installed) ──────────────
+    logger.warning("undetected-chromedriver not available — using plain Selenium Chrome.")
+    from selenium.webdriver.chrome.options import Options as ChromeOptions  # noqa: PLC0415
+    from selenium.webdriver.chrome.service import Service as ChromeService  # noqa: PLC0415
+    from webdriver_manager.chrome import ChromeDriverManager  # noqa: PLC0415
+
     options = ChromeOptions()
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--start-maximized")
@@ -121,44 +291,14 @@ def _make_driver(browser_name: str, headless: bool = False) -> webdriver.Remote:
         options.add_argument("--headless=new")
 
     if browser_name == "brave":
-        brave_candidates = []
-        for env_key in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
-            val = os.environ.get(env_key, "")
-            if val:
-                brave_candidates.append(
-                    os.path.join(val, "BraveSoftware", "Brave-Browser", "Application", "brave.exe")
-                )
-
-        brave_path = next((p for p in brave_candidates if os.path.exists(p)), None)
+        brave_path = _find_brave_path()
         if brave_path:
             options.binary_location = brave_path
-            logger.info(f"Brave found at: {brave_path}")
-        else:
-            logger.warning("Brave binary not found — falling back to Chrome.")
 
-        # Detect Brave version → fetch matching ChromeDriver
-        driver_version = None
-        if brave_path:
-            try:
-                out = subprocess.check_output(
-                    [brave_path, "--version"], stderr=subprocess.DEVNULL
-                ).decode().strip()
-                m = re.search(r"(\d+\.\d+\.\d+\.\d+)", out)
-                if m:
-                    driver_version = m.group(1).split(".")[0]
-                    logger.info(f"Brave version: {m.group(1)}")
-            except Exception as exc:
-                logger.warning(f"Could not detect Brave version: {exc}")
-
-        try:
-            mgr = ChromeDriverManager(driver_version=driver_version) if driver_version else ChromeDriverManager()
-            service = ChromeService(mgr.install())
-        except Exception:
-            service = ChromeService(ChromeDriverManager().install())
-    else:
-        service = ChromeService(ChromeDriverManager().install())
-
-    return webdriver.Chrome(service=service, options=options)
+    service = ChromeService(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+    _apply_stealth_cdp(driver)
+    return driver
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +408,7 @@ class TikTokUploader:
         video_path: str,
         title: str,
         hashtags: list[str] | None = None,
-        headless: bool = True,
+        headless: bool = False,
         browser_name: str = "chrome",
         schedule_time: str | None = None,
     ) -> bool:
@@ -278,10 +418,21 @@ class TikTokUploader:
 
         Parameters
         ----------
+        headless : bool
+            Kept for API compatibility — ALWAYS forced to False for uploads.
+            TikTok aggressively blocks headless sessions regardless of spoofing.
         schedule_time : str | None
             If given, tells TikTok Studio to schedule the post.
             Format expected by tiktok_uploader: 'YYYY-MM-DD HH:MM:SS'
         """
+        # Force non-headless: TikTok detects headless Chrome even with UC
+        if headless:
+            self.logger.warning(
+                "headless=True was requested but TikTok blocks headless sessions. "
+                "Forcing headless=False."
+            )
+        headless = False  # always
+
         if not os.path.exists(video_path):
             self.logger.error(f"Video file not found: {video_path}")
             return False
@@ -308,23 +459,32 @@ class TikTokUploader:
             from tiktok_uploader.upload import upload_videos
             from tiktok_uploader.auth import AuthBackend
 
-            # Always build our own driver so every browser (including Brave)
-            # works — the library's built-in browser factory rejects 'brave'.
-            driver = _make_driver(browser_name, headless=headless)
+            # Build our own undetected driver — the library's factory rejects 'brave'
+            # and uses plain Selenium which gets flagged immediately.
+            driver = _make_driver(browser_name, headless=False)
+
+            # Warm-up: give the browser a moment to settle before automation begins
+            _human_delay(1.5, 3.0)
+
             auth = AuthBackend(cookies=self.cookies_path)
 
             video_dict = {"path": video_path, "description": description}
             if schedule_time:
                 video_dict["schedule"] = schedule_time
 
+            # Small delay before starting the upload sequence
+            _human_delay(0.5, 1.5)
+
             failed = upload_videos(
                 videos=[video_dict],
                 auth=auth,
-                browser_agent=driver,  # inject our pre-built driver
+                browser_agent=driver,  # inject our pre-built undetected driver
             )
 
             if not failed:
                 self.logger.info("Upload completed successfully.")
+                # Brief pause so the page can finalize before the driver closes
+                _human_delay(1.0, 2.0)
                 return True
             else:
                 self.logger.error(f"Upload failed: {failed}")
@@ -339,3 +499,4 @@ class TikTokUploader:
                     driver.quit()
                 except Exception:
                     pass
+

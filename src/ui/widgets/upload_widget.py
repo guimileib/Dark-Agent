@@ -475,189 +475,472 @@ class UploadWidget(QWidget):
     # UI construction
     # ------------------------------------------------------------------
 
-    def _init_ui(self):
-        root = QVBoxLayout(self)
-        root.setSpacing(10)
+    # Palette constants — single source of truth for the Apple-style theme
+    _BG_CARD     = "#111827"      # card background (near-black, slightly blue)
+    _BG_FIELD    = "#0D1520"      # input field background
+    _BORDER      = "#1F2D3D"      # subtle card border
+    _BORDER_FOCUS= "#3B82F6"      # blue focus ring
+    _TEXT_PRI    = "#F0F4FF"      # primary text (near-white, cool tint)
+    _TEXT_SEC    = "#64748B"      # secondary / hint text
+    _TEXT_DIM    = "#374151"      # very dim (placeholders)
+    _ACCENT      = "#3B82F6"      # TikTok-blue accent
+    _PINK        = "#EC4899"      # TikTok-pink CTA
 
-        # ── Accounts ──────────────────────────────────────────────────
-        acc_group = QGroupBox("👤 Contas TikTok")
+    def _card_style(self, radius: int = 18) -> str:
+        """Return a QGroupBox stylesheet that looks like an Apple card."""
+        return f"""
+            QGroupBox {{
+                background: {self._BG_CARD};
+                border: 1px solid {self._BORDER};
+                border-radius: {radius}px;
+                margin-top: 10px;
+                padding: 18px 20px 16px 20px;
+                color: {self._TEXT_PRI};
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 16px;
+                padding: 0 6px;
+                color: {self._TEXT_PRI};
+                font-size: 12px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                background: {self._BG_CARD};
+            }}
+        """
+
+    def _field_style(self, radius: int = 12) -> str:
+        return (
+            f"background: {self._BG_FIELD}; border: 1.5px solid {self._BORDER};"
+            f" border-radius: {radius}px; color: {self._TEXT_PRI};"
+            f" padding: 9px 14px; font-size: 13px; selection-background-color: {self._ACCENT};"
+        )
+
+    def _label_style(self, size: int = 12, bold: bool = True, color: str | None = None) -> str:
+        c = color or self._TEXT_PRI
+        w = "700" if bold else "400"
+        return f"color: {c}; font-size: {size}px; font-weight: {w}; background: transparent;"
+
+    def _btn_secondary_style(self) -> str:
+        return f"""
+            QPushButton {{
+                background: {self._BG_FIELD};
+                color: {self._TEXT_PRI};
+                border: 1.5px solid {self._BORDER};
+                border-radius: 10px;
+                padding: 8px 14px;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background: {self._BORDER};
+                border-color: {self._ACCENT};
+                color: {self._ACCENT};
+            }}
+            QPushButton:pressed {{ background: #0D1520; }}
+        """
+
+    def _divider(self) -> QFrame:
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet(f"color: {self._BORDER}; background: {self._BORDER}; border: none; max-height: 1px;")
+        return line
+
+    def _init_ui(self):
+        # ── Outer layout: scroll area so nothing gets squished ────────
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical {
+                width: 6px; background: transparent; margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #1F2D3D; border-radius: 3px; min-height: 30px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        root = QVBoxLayout(container)
+        root.setContentsMargins(16, 12, 16, 20)
+        root.setSpacing(12)
+
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+
+        # ── 1. Accounts card ──────────────────────────────────────────
+        acc_group = QGroupBox("  👤  Contas TikTok")
+        acc_group.setStyleSheet(self._card_style())
         acc_layout = QVBoxLayout(acc_group)
+        acc_layout.setSpacing(10)
+        acc_layout.setContentsMargins(0, 10, 0, 0)
 
         self.account_list = QListWidget()
-        self.account_list.setFixedHeight(100)
+        self.account_list.setFixedHeight(88)
         self.account_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.account_list.setStyleSheet(f"""
+            QListWidget {{
+                background: {self._BG_FIELD};
+                border: 1.5px solid {self._BORDER};
+                border-radius: 12px;
+                color: {self._TEXT_PRI};
+                font-size: 13px;
+                padding: 4px 8px;
+                outline: 0;
+            }}
+            QListWidget::item {{ padding: 6px 8px; border-radius: 8px; }}
+            QListWidget::item:selected {{
+                background: {self._ACCENT};
+                color: white;
+            }}
+            QListWidget::item:hover:!selected {{ background: {self._BORDER}; }}
+        """)
         acc_layout.addWidget(self.account_list)
 
         acc_btn_row = QHBoxLayout()
-        self.btn_add_account = QPushButton("➕ Adicionar Conta")
+        acc_btn_row.setSpacing(8)
+        self.btn_add_account = QPushButton("  ＋  Adicionar Conta")
+        self.btn_add_account.setStyleSheet(f"""
+            QPushButton {{
+                background: {self._ACCENT};
+                color: white;
+                border: none;
+                border-radius: 10px;
+                padding: 9px 16px;
+                font-size: 12px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{ background: #2563EB; }}
+            QPushButton:pressed {{ background: #1D4ED8; }}
+            QPushButton:disabled {{ background: #1F2D3D; color: {self._TEXT_SEC}; }}
+        """)
         self.btn_add_account.clicked.connect(self._on_add_account)
-        self.btn_remove_account = QPushButton("🗑️ Remover Selecionada")
+
+        self.btn_remove_account = QPushButton("  🗑  Remover")
+        self.btn_remove_account.setStyleSheet(self._btn_secondary_style())
         self.btn_remove_account.clicked.connect(self._on_remove_account)
+
         acc_btn_row.addWidget(self.btn_add_account)
         acc_btn_row.addWidget(self.btn_remove_account)
+        acc_btn_row.addStretch()
         acc_layout.addLayout(acc_btn_row)
 
         self.lbl_account_status = QLabel("Selecione uma conta na lista acima.")
         self.lbl_account_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_account_status.setStyleSheet(
+            self._label_style(11, bold=False, color=self._TEXT_SEC)
+        )
         acc_layout.addWidget(self.lbl_account_status)
-
         root.addWidget(acc_group)
 
-        # ── Browser ───────────────────────────────────────────────────
-        browser_group = QGroupBox("🌐 Navegador para Automação")
-        browser_row = QHBoxLayout(browser_group)
-        browser_row.addWidget(QLabel("Navegador:"))
+        # ── 2. Browser + Files  (side by side row) ────────────────────
+        row2 = QHBoxLayout()
+        row2.setSpacing(12)
+
+        # Browser mini-card
+        browser_card = QGroupBox("  🌐  Navegador")
+        browser_card.setStyleSheet(self._card_style())
+        browser_inner = QVBoxLayout(browser_card)
+        browser_inner.setSpacing(8)
+        browser_inner.setContentsMargins(0, 10, 0, 0)
+
+        lbl_br = QLabel("Automação via:")
+        lbl_br.setStyleSheet(self._label_style(11, bold=False, color=self._TEXT_SEC))
+        browser_inner.addWidget(lbl_br)
+
         self.combo_browser = QComboBox()
         self.combo_browser.addItems(["chrome", "brave", "firefox", "edge"])
-        browser_row.addWidget(self.combo_browser)
-        browser_row.addStretch()
-        root.addWidget(browser_group)
+        self.combo_browser.setStyleSheet(f"""
+            QComboBox {{
+                background: {self._BG_FIELD};
+                border: 1.5px solid {self._BORDER};
+                border-radius: 10px;
+                color: {self._TEXT_PRI};
+                padding: 8px 12px;
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            QComboBox:hover {{ border-color: {self._ACCENT}; }}
+            QComboBox::drop-down {{
+                border: none; width: 28px;
+                subcontrol-origin: padding;
+                subcontrol-position: right center;
+            }}
+            QComboBox QAbstractItemView {{
+                background: {self._BG_CARD};
+                border: 1px solid {self._BORDER};
+                color: {self._TEXT_PRI};
+                selection-background-color: {self._ACCENT};
+                border-radius: 10px;
+            }}
+        """)
+        browser_inner.addWidget(self.combo_browser)
+        browser_inner.addStretch()
+        row2.addWidget(browser_card, 1)
 
-        # ── Files ─────────────────────────────────────────────────────
-        file_group = QGroupBox("🎬 Arquivos de Vídeo")
-        file_layout = QVBoxLayout(file_group)
+        # Files mini-card
+        files_card = QGroupBox("  🎬  Vídeos")
+        files_card.setStyleSheet(self._card_style())
+        files_inner = QVBoxLayout(files_card)
+        files_inner.setSpacing(8)
+        files_inner.setContentsMargins(0, 10, 0, 0)
 
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.file_list.setMinimumHeight(70)
-        self.file_list.setMaximumHeight(100)
-        file_layout.addWidget(self.file_list)
+        self.file_list.setFixedHeight(82)
+        self.file_list.setStyleSheet(f"""
+            QListWidget {{
+                background: {self._BG_FIELD};
+                border: 1.5px solid {self._BORDER};
+                border-radius: 10px;
+                color: {self._TEXT_PRI};
+                font-size: 12px;
+                padding: 4px 6px;
+                outline: 0;
+            }}
+            QListWidget::item {{ padding: 4px 6px; border-radius: 6px; }}
+            QListWidget::item:selected {{ background: {self._ACCENT}; color: white; }}
+        """)
+        files_inner.addWidget(self.file_list)
 
         file_btn_row = QHBoxLayout()
-        btn_add_file = QPushButton("Adicionar Vídeos…")
+        file_btn_row.setSpacing(6)
+        btn_add_file = QPushButton("＋ Adicionar")
+        btn_add_file.setStyleSheet(f"""
+            QPushButton {{
+                background: {self._ACCENT};
+                color: white; border: none;
+                border-radius: 8px;
+                padding: 7px 10px;
+                font-size: 11px; font-weight: 700;
+            }}
+            QPushButton:hover {{ background: #2563EB; }}
+        """)
         btn_add_file.clicked.connect(self._browse_files)
-        btn_remove_file = QPushButton("Remover Selecionados")
+
+        btn_remove_file = QPushButton("Remover")
+        btn_remove_file.setStyleSheet(self._btn_secondary_style())
         btn_remove_file.clicked.connect(self._remove_selected_files)
-        btn_clear_files = QPushButton("Limpar Lista")
+
+        btn_clear_files = QPushButton("Limpar")
+        btn_clear_files.setStyleSheet(self._btn_secondary_style())
         btn_clear_files.clicked.connect(self._clear_files)
+
         file_btn_row.addWidget(btn_add_file)
         file_btn_row.addWidget(btn_remove_file)
         file_btn_row.addWidget(btn_clear_files)
-        file_layout.addLayout(file_btn_row)
-        root.addWidget(file_group)
+        files_inner.addLayout(file_btn_row)
+        row2.addWidget(files_card, 2)
 
-        # ── Metadata ──────────────────────────────────────────────────
-        meta_group = QGroupBox("📝 Detalhes do Vídeo")
-        meta_layout = QVBoxLayout(meta_group)
-        meta_layout.setSpacing(8)
-        meta_layout.setContentsMargins(10, 14, 10, 10)
+        root.addLayout(row2)
 
-        # Title (optional note)
-        title_row = QHBoxLayout()
-        lbl_title = QLabel("Título:")
-        lbl_title.setStyleSheet("font-weight: bold;")
-        title_row.addWidget(lbl_title)
-        lbl_optional_title = QLabel("(opcional)")
-        lbl_optional_title.setStyleSheet("color: #64748b; font-size: 11px;")
-        title_row.addWidget(lbl_optional_title)
-        title_row.addStretch()
-        meta_layout.addLayout(title_row)
+        # ── 3. Video details card ─────────────────────────────────────
+        meta_card = QGroupBox("  📝  Detalhes do Vídeo")
+        meta_card.setStyleSheet(self._card_style())
+        meta_layout = QVBoxLayout(meta_card)
+        meta_layout.setSpacing(14)
+        meta_layout.setContentsMargins(0, 12, 0, 0)
+
+        # Title field
+        lbl_title_row = QHBoxLayout()
+        lbl_title = QLabel("Título")
+        lbl_title.setStyleSheet(self._label_style(12))
+        lbl_opt_title = QLabel("opcional")
+        lbl_opt_title.setStyleSheet(
+            f"color: {self._TEXT_SEC}; font-size: 10px; font-weight: 500;"
+            f" background: {self._BORDER}; border-radius: 4px; padding: 1px 6px;"
+        )
+        lbl_title_row.addWidget(lbl_title)
+        lbl_title_row.addSpacing(6)
+        lbl_title_row.addWidget(lbl_opt_title)
+        lbl_title_row.addStretch()
+        meta_layout.addLayout(lbl_title_row)
 
         self.txt_title = QLineEdit()
         self.txt_title.setPlaceholderText("Título curto do vídeo…")
+        self.txt_title.setMinimumHeight(42)
         self.txt_title.setStyleSheet(
-            "QLineEdit { background: #0f172a; border: 1px solid #334155; border-radius: 8px;"
-            " color: #e2e8f0; padding: 6px 10px; font-size: 13px; }"
-            "QLineEdit:focus { border-color: #3b82f6; }"
+            f"QLineEdit {{ {self._field_style(12)} }}"
+            f"QLineEdit:focus {{ border-color: {self._BORDER_FOCUS}; }}"
+            f"QLineEdit::placeholder {{ color: {self._TEXT_SEC}; }}"
         )
         meta_layout.addWidget(self.txt_title)
 
-        # Description (optional — TikTok doesn't require it)
-        desc_row = QHBoxLayout()
-        lbl_desc = QLabel("Descrição:")
-        lbl_desc.setStyleSheet("font-weight: bold;")
-        desc_row.addWidget(lbl_desc)
-        lbl_optional = QLabel("(opcional — até 4000 caracteres)")
-        lbl_optional.setStyleSheet("color: #64748b; font-size: 11px;")
-        desc_row.addWidget(lbl_optional)
-        desc_row.addStretch()
-        self._char_counter = QLabel("0/4000")
-        self._char_counter.setStyleSheet("color: #64748b; font-size: 11px;")
-        desc_row.addWidget(self._char_counter)
-        meta_layout.addLayout(desc_row)
+        meta_layout.addWidget(self._divider())
+
+        # Description field
+        lbl_desc_row = QHBoxLayout()
+        lbl_desc = QLabel("Descrição")
+        lbl_desc.setStyleSheet(self._label_style(12))
+        lbl_opt_desc = QLabel("opcional")
+        lbl_opt_desc.setStyleSheet(
+            f"color: {self._TEXT_SEC}; font-size: 10px; font-weight: 500;"
+            f" background: {self._BORDER}; border-radius: 4px; padding: 1px 6px;"
+        )
+        lbl_desc_row.addWidget(lbl_desc)
+        lbl_desc_row.addSpacing(6)
+        lbl_desc_row.addWidget(lbl_opt_desc)
+        lbl_desc_row.addStretch()
+        self._char_counter = QLabel("0 / 4000")
+        self._char_counter.setStyleSheet(self._label_style(10, bold=False, color=self._TEXT_SEC))
+        lbl_desc_row.addWidget(self._char_counter)
+        meta_layout.addLayout(lbl_desc_row)
 
         self.txt_caption = QTextEdit()
         self.txt_caption.setPlaceholderText("Texto que aparece abaixo do vídeo (opcional)…")
-        self.txt_caption.setMinimumHeight(68)
-        self.txt_caption.setMaximumHeight(90)
+        self.txt_caption.setFixedHeight(88)
         self.txt_caption.setStyleSheet(
-            "QTextEdit { background: #0f172a; border: 1px solid #334155; border-radius: 8px;"
-            " color: #e2e8f0; padding: 6px 10px; font-size: 13px; }"
-            "QTextEdit:focus { border-color: #3b82f6; }"
+            f"QTextEdit {{ {self._field_style(12)} }}"
+            f"QTextEdit:focus {{ border-color: {self._BORDER_FOCUS}; }}"
         )
         self.txt_caption.textChanged.connect(self._on_caption_changed)
         meta_layout.addWidget(self.txt_caption)
 
-        # Hashtags chip bar
-        lbl_ht = QLabel("# Hashtags:")
-        lbl_ht.setStyleSheet("font-weight: bold;")
+        meta_layout.addWidget(self._divider())
+
+        # Hashtags
+        lbl_ht = QLabel("# Hashtags")
+        lbl_ht.setStyleSheet(self._label_style(12))
         meta_layout.addWidget(lbl_ht)
 
         self.hashtag_bar = HashtagBar()
         meta_layout.addWidget(self.hashtag_bar)
 
-        root.addWidget(meta_group)
+        root.addWidget(meta_card)
 
-        # ── Schedule ──────────────────────────────────────────────────
-        sched_group = QGroupBox("⏰ Quando Publicar")
-        sched_layout = QVBoxLayout(sched_group)
-        sched_layout.setSpacing(8)
+        # ── 4. Schedule card ──────────────────────────────────────────
+        sched_card = QGroupBox("  ⏰  Quando Publicar")
+        sched_card.setStyleSheet(self._card_style())
+        sched_layout = QVBoxLayout(sched_card)
+        sched_layout.setSpacing(10)
+        sched_layout.setContentsMargins(0, 12, 0, 0)
 
         toggle_row = QHBoxLayout()
+        toggle_row.setSpacing(0)
+
+        radio_style = f"""
+            QRadioButton {{
+                color: {self._TEXT_PRI};
+                font-size: 13px;
+                font-weight: 600;
+                padding: 9px 20px;
+                border-radius: 10px;
+            }}
+            QRadioButton:checked {{
+                background: {self._ACCENT};
+                color: white;
+            }}
+            QRadioButton:!checked {{ background: {self._BG_FIELD}; }}
+            QRadioButton::indicator {{ width: 0; height: 0; }}
+        """
         self.radio_now = QRadioButton("🟢  Agora")
         self.radio_later = QRadioButton("📅  Programar")
         self.radio_now.setChecked(True)
         mode_grp = QButtonGroup(self)
         mode_grp.addButton(self.radio_now)
         mode_grp.addButton(self.radio_later)
-        self.radio_now.setStyleSheet("QRadioButton { font-size: 13px; font-weight: bold; }")
-        self.radio_later.setStyleSheet("QRadioButton { font-size: 13px; font-weight: bold; }")
-        toggle_row.addWidget(self.radio_now)
-        toggle_row.addSpacing(20)
-        toggle_row.addWidget(self.radio_later)
+        self.radio_now.setStyleSheet(radio_style)
+        self.radio_later.setStyleSheet(radio_style)
+
+        pill_frame = QFrame()
+        pill_frame.setStyleSheet(
+            f"background: {self._BG_FIELD}; border-radius: 12px; border: 1.5px solid {self._BORDER};"
+        )
+        pill_row = QHBoxLayout(pill_frame)
+        pill_row.setContentsMargins(4, 4, 4, 4)
+        pill_row.setSpacing(4)
+        pill_row.addWidget(self.radio_now)
+        pill_row.addWidget(self.radio_later)
+        toggle_row.addWidget(pill_frame)
         toggle_row.addStretch()
         sched_layout.addLayout(toggle_row)
 
-        # Inline date+time picker (hidden until "Programar" selected)
         self.dt_picker = InlineDateTimePicker()
         self.dt_picker.setVisible(False)
         self.radio_now.toggled.connect(lambda checked: self.dt_picker.setVisible(not checked))
         sched_layout.addWidget(self.dt_picker)
+        root.addWidget(sched_card)
 
-        root.addWidget(sched_group)
-
-        # ── Scheduled queue ───────────────────────────────────────────
-        self.queue_group = QGroupBox("📋 Fila de Agendamentos")
+        # ── 5. Queue card (hidden until scheduled posts exist) ────────
+        self.queue_group = QGroupBox("  📋  Fila de Agendamentos")
+        self.queue_group.setStyleSheet(self._card_style())
         queue_layout = QVBoxLayout(self.queue_group)
+        queue_layout.setSpacing(8)
+        queue_layout.setContentsMargins(0, 10, 0, 0)
 
         self.queue_list = QListWidget()
-        self.queue_list.setMinimumHeight(50)
-        self.queue_list.setMaximumHeight(100)
+        self.queue_list.setFixedHeight(80)
+        self.queue_list.setStyleSheet(f"""
+            QListWidget {{
+                background: {self._BG_FIELD}; border: 1.5px solid {self._BORDER};
+                border-radius: 10px; color: {self._TEXT_PRI};
+                font-size: 12px; padding: 4px 8px; outline: 0;
+            }}
+            QListWidget::item {{ padding: 5px 6px; border-radius: 6px; }}
+            QListWidget::item:selected {{ background: {self._ACCENT}; color: white; }}
+        """)
         queue_layout.addWidget(self.queue_list)
 
         btn_cancel = QPushButton("Cancelar Selecionado")
+        btn_cancel.setStyleSheet(self._btn_secondary_style())
         btn_cancel.clicked.connect(self._cancel_selected)
         queue_layout.addWidget(btn_cancel)
 
         self.queue_group.setVisible(False)
         root.addWidget(self.queue_group)
 
-        # ── Action button ─────────────────────────────────────────────
-        self.btn_upload = QPushButton("🚀 Enviar para TikTok")
-        self.btn_upload.setMinimumHeight(50)
-        self.btn_upload.setStyleSheet(
-            "QPushButton { font-size: 16px; font-weight: bold; background-color: #E91E63;"
-            " color: white; border-radius: 10px; }"
-            "QPushButton:hover { background-color: #c2185b; }"
-            "QPushButton:disabled { background-color: #4a4a4a; color: #888; }"
-        )
+        # ── 6. CTA Upload button ──────────────────────────────────────
+        self.btn_upload = QPushButton("🚀  Enviar para TikTok")
+        self.btn_upload.setMinimumHeight(54)
+        self.btn_upload.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_upload.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 15px;
+                font-weight: 800;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #EC4899, stop:1 #8B5CF6
+                );
+                color: white;
+                border: none;
+                border-radius: 16px;
+                letter-spacing: 0.5px;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #DB2777, stop:1 #7C3AED
+                );
+            }}
+            QPushButton:pressed {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #BE185D, stop:1 #6D28D9
+                );
+            }}
+            QPushButton:disabled {{
+                background: {self._BORDER};
+                color: {self._TEXT_SEC};
+            }}
+        """)
         self.btn_upload.clicked.connect(self._handle_action)
         root.addWidget(self.btn_upload)
 
         self.lbl_progress = QLabel("")
         self.lbl_progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_progress.setWordWrap(True)
-        self.lbl_progress.setStyleSheet("font-size: 12px; color: #94a3b8;")
+        self.lbl_progress.setStyleSheet(self._label_style(12, bold=False, color=self._TEXT_SEC))
         root.addWidget(self.lbl_progress)
 
         root.addStretch()
@@ -668,11 +951,11 @@ class UploadWidget(QWidget):
 
     def _on_caption_changed(self):
         n = len(self.txt_caption.toPlainText())
-        self._char_counter.setText(f"{n}/4000")
+        self._char_counter.setText(f"{n} / 4000")
         if n > 4000:
-            self._char_counter.setStyleSheet("color: #ef4444; font-size: 11px;")
+            self._char_counter.setStyleSheet(f"color: #EF4444; font-size: 10px; font-weight: 400; background: transparent;")
         else:
-            self._char_counter.setStyleSheet("color: #64748b; font-size: 11px;")
+            self._char_counter.setStyleSheet(self._label_style(10, bold=False, color=self._TEXT_SEC))
 
     # ------------------------------------------------------------------
     # Account management
