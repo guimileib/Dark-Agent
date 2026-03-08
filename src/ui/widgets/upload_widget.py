@@ -829,29 +829,48 @@ class UploadWidget(QWidget):
         toggle_row = QHBoxLayout()
         toggle_row.setSpacing(0)
 
-        radio_style = f"""
-            QRadioButton {{
-                color: {self._TEXT_PRI};
+        # Use QPushButton (checkable) instead of QRadioButton so the native
+        # indicator dot never renders — the emoji stays perfectly centred.
+        _pill_btn_base = f"""
+            QPushButton {{
                 font-size: 13px;
                 font-weight: 600;
-                padding: 9px 20px;
+                padding: 9px 22px;
                 border-radius: 10px;
+                border: none;
+                text-align: center;
             }}
-            QRadioButton:checked {{
+            QPushButton:checked {{
                 background: {self._ACCENT};
                 color: white;
             }}
-            QRadioButton:!checked {{ background: {self._BG_FIELD}; }}
-            QRadioButton::indicator {{ width: 0; height: 0; }}
+            QPushButton:!checked {{
+                background: transparent;
+                color: {self._TEXT_SEC};
+            }}
+            QPushButton:!checked:hover {{
+                background: {self._BORDER};
+                color: {self._TEXT_PRI};
+            }}
         """
-        self.radio_now = QRadioButton("🟢  Agora")
-        self.radio_later = QRadioButton("📅  Programar")
+
+        self.radio_now = QPushButton("🟢  Agora")
+        self.radio_now.setCheckable(True)
         self.radio_now.setChecked(True)
+        self.radio_now.setStyleSheet(_pill_btn_base)
+        self.radio_now.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.radio_later = QPushButton("📅  Programar")
+        self.radio_later.setCheckable(True)
+        self.radio_later.setChecked(False)
+        self.radio_later.setStyleSheet(_pill_btn_base)
+        self.radio_later.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        # Mutual exclusion via QButtonGroup
         mode_grp = QButtonGroup(self)
+        mode_grp.setExclusive(True)
         mode_grp.addButton(self.radio_now)
         mode_grp.addButton(self.radio_later)
-        self.radio_now.setStyleSheet(radio_style)
-        self.radio_later.setStyleSheet(radio_style)
 
         pill_frame = QFrame()
         pill_frame.setStyleSheet(
@@ -868,7 +887,9 @@ class UploadWidget(QWidget):
 
         self.dt_picker = InlineDateTimePicker()
         self.dt_picker.setVisible(False)
-        self.radio_now.toggled.connect(lambda checked: self.dt_picker.setVisible(not checked))
+        # radio_now/later are now QPushButtons — use clicked instead of toggled
+        self.radio_now.clicked.connect(lambda: self.dt_picker.setVisible(False))
+        self.radio_later.clicked.connect(lambda: self.dt_picker.setVisible(True))
         sched_layout.addWidget(self.dt_picker)
         root.addWidget(sched_card)
 
