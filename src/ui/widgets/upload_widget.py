@@ -396,45 +396,30 @@ class UploaderThread(QThread):
     def __init__(
         self,
         account_name: str,
-        video_path: str,
-        description: str,
-        hashtags: list[str],
+        tasks: list[dict],
         browser: str,
         headless: bool = True,
-        schedule_time: str | None = None,
     ):
         super().__init__()
         self.account_name = account_name
-        self.video_path = video_path
-        self.description = description
-        self.hashtags = hashtags
+        self.tasks = tasks
         self.browser = browser
         self.headless = headless
-        self.schedule_time = schedule_time
 
     def run(self):
         uploader = TikTokUploader(self.account_name)
         try:
-            if self.schedule_time:
-                self.progress.emit(f"⏰ Agendando upload com conta '{self.account_name}' para {self.schedule_time}…")
-            else:
-                self.progress.emit(f"🚀 Iniciando upload com conta '{self.account_name}'…")
+            self.progress.emit(f"🚀 Iniciando envio em lote (conta '{self.account_name}')…")
 
-            ok = uploader.upload(
-                video_path=self.video_path,
-                title=self.description,
-                hashtags=self.hashtags,
+            ok = uploader.upload_batch(
+                tasks=self.tasks,
                 headless=self.headless,
                 browser_name=self.browser,
-                schedule_time=self.schedule_time,
             )
             if ok:
-                if self.schedule_time:
-                    self.finished.emit(True, f"Post agendado com sucesso para {self.schedule_time}!")
-                else:
-                    self.finished.emit(True, "Upload realizado com sucesso!")
+                self.finished.emit(True, "Todos os uploads concluídos com sucesso!")
             else:
-                self.finished.emit(False, "Falha no upload. Verifique os cookies e o arquivo.")
+                self.finished.emit(False, "Falha em um ou mais uploads. Verifique os cookies e os arquivos.")
         except Exception as exc:
             self.finished.emit(False, f"Erro: {exc}")
 
@@ -463,6 +448,8 @@ class UploadWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._scheduled_posts: list[ScheduledPost] = []
+        self._video_metadata: dict[str, dict] = {}
+        self._current_video: str | None = None
         self._countdown_timer = QTimer(self)
         self._countdown_timer.timeout.connect(self._refresh_queue_labels)
         self._countdown_timer.start(1000)
@@ -887,10 +874,28 @@ class UploadWidget(QWidget):
 
         self.dt_picker = InlineDateTimePicker()
         self.dt_picker.setVisible(False)
+        
+        self.interval_widget = QWidget()
+        interval_layout = QHBoxLayout(self.interval_widget)
+        interval_layout.setContentsMargins(0, 0, 0, 0)
+        lbl_interval = QLabel("Intervalo entre posts (minutos):")
+        lbl_interval.setStyleSheet(self._label_style(12))
+        self.spin_interval = QSpinBox()
+        self.spin_interval.setRange(15, 1440)
+        self.spin_interval.setValue(60)
+        self.spin_interval.setStyleSheet(self._field_style(10))
+        interval_layout.addWidget(lbl_interval)
+        interval_layout.addWidget(self.spin_interval)
+        interval_layout.addStretch()
+        self.interval_widget.setVisible(False)
+
         # radio_now/later are now QPushButtons — use clicked instead of toggled
         self.radio_now.clicked.connect(lambda: self.dt_picker.setVisible(False))
+        self.radio_now.clicked.connect(lambda: self.interval_widget.setVisible(False))
         self.radio_later.clicked.connect(lambda: self.dt_picker.setVisible(True))
+        self.radio_later.clicked.connect(lambda: self.interval_widget.setVisible(True))
         sched_layout.addWidget(self.dt_picker)
+        sched_layout.addWidget(self.interval_widget)
         root.addWidget(sched_card)
 
         # ── 5. Queue card (hidden until scheduled posts exist) ────────
@@ -965,6 +970,51 @@ class UploadWidget(QWidget):
         root.addWidget(self.lbl_progress)
 
         root.addStretch()
+        
+        # Connect signals for per-video metadata
+        self.file_list.currentItemChanged.connect(self._on_file_selected)
+        self.txt_title.textChanged.connect(self._on_meta_edited)
+        self.txt_caption.textChanged.connect(self._on_meta_edited)
+        self._update_meta_fields()
+
+    # ------------------------------------------------------------------
+    # Per-video metadata helpers
+    # ------------------------------------------------------------------
+
+    def _on_file_selected(self, current, previous):
+        if current:
+            self._current_video = current.text()
+        else:
+            self._current_video = None
+        self._update_meta_fields()
+
+    def _update_meta_fields(self):
+        if not self._current_video:
+            self.txt_title.blockSignals(True)
+            self.txt_caption.blockSignals(True)
+            self.txt_title.clear()
+            self.txt_caption.clear()
+            self.txt_title.setEnabled(False)
+            self.txt_caption.setEnabled(False)
+            self.txt_title.blockSignals(False)
+            self.txt_caption.blockSignals(False)
+            return
+
+        self.txt_title.setEnabled(True)
+        self.txt_caption.setEnabled(True)
+        data = self._video_metadata.get(self._current_video, {"title": "", "caption": ""})
+        self.txt_title.blockSignals(True)
+        self.txt_caption.blockSignals(True)
+        self.txt_title.setText(data.get("title", ""))
+        self.txt_caption.setPlainText(data.get("caption", ""))
+        self.txt_title.blockSignals(False)
+        self.txt_caption.blockSignals(False)
+        self._on_caption_changed()
+
+    def _on_meta_edited(self):
+        if self._current_video and self._current_video in self._video_metadata:
+            self._video_metadata[self._current_video]["title"] = self.txt_title.text()
+            self._video_metadata[self._current_video]["caption"] = self.txt_caption.toPlainText()
 
     # ------------------------------------------------------------------
     # Caption char counter
@@ -1062,14 +1112,26 @@ class UploadWidget(QWidget):
             self, "Selecionar Vídeos", "", "Video Files (*.mp4 *.mov *.avi *.mkv)"
         )
         if filenames:
+            for f in filenames:
+                if f not in self._video_metadata:
+                    self._video_metadata[f] = {"title": "", "caption": ""}
             self.file_list.addItems(filenames)
 
     def _remove_selected_files(self):
         for item in self.file_list.selectedItems():
+            text = item.text()
+            if text in self._video_metadata:
+                del self._video_metadata[text]
             self.file_list.takeItem(self.file_list.row(item))
+        if self.file_list.count() == 0:
+            self._current_video = None
+            self._update_meta_fields()
 
     def _clear_files(self):
         self.file_list.clear()
+        self._video_metadata.clear()
+        self._current_video = None
+        self._update_meta_fields()
 
     def get_selected_files(self) -> list[str]:
         return [self.file_list.item(i).text() for i in range(self.file_list.count())]
@@ -1089,105 +1151,97 @@ class UploadWidget(QWidget):
             QMessageBox.warning(self, "Erro", "Selecione pelo menos um arquivo de vídeo!")
             return
 
-        video = files[0]
-        if not Path(video).exists():
-            QMessageBox.warning(self, "Erro", "Arquivo de vídeo não encontrado!")
-            return
-
-        # Description is OPTIONAL on TikTok
-        caption = self.txt_caption.toPlainText().strip()
-        title = self.txt_title.text().strip()
-
-        # Build final description: title (if any) + caption (if any)
-        if title and caption:
-            final_description = f"{title}. {caption}"
-        elif title:
-            final_description = title
-        else:
-            final_description = caption  # may be empty — TikTok allows it
+        for video in files:
+            if not Path(video).exists():
+                QMessageBox.warning(self, "Erro", f"Arquivo de vídeo não encontrado: {video}")
+                return
 
         hashtags = self.hashtag_bar.get_tags()
         browser = self.combo_browser.currentText()
 
         if self.radio_now.isChecked():
-            self._start_upload(account_name, video, final_description, hashtags, browser)
+            self._start_batch_upload(account_name, files, hashtags, browser, scheduled=False)
         else:
-            # Use TikTok-native scheduling (send to TikTok Studio with schedule time)
-            self._start_scheduled_upload(account_name, video, final_description, hashtags, browser)
+            self._start_batch_upload(account_name, files, hashtags, browser, scheduled=True)
 
     # ------------------------------------------------------------------
-    # Immediate upload
+    # Batch Upload
     # ------------------------------------------------------------------
 
-    def _start_upload(self, account_name, video, description, hashtags, browser):
+    def _start_batch_upload(self, account_name, files, hashtags, browser, scheduled=False):
+        tasks = []
+        
+        if scheduled:
+            base_dt = self.dt_picker.selected_datetime()
+            interval_min = self.spin_interval.value()
+
+            # TikTok requirement validation for the very first video
+            delta_s = (base_dt - datetime.now()).total_seconds()
+            if delta_s < 15 * 60:
+                QMessageBox.warning(
+                    self,
+                    "Aviso",
+                    "O TikTok exige que o agendamento seja pelo menos 15 minutos no futuro!",
+                )
+                return
+
+        for i, video in enumerate(files):
+            data = self._video_metadata.get(video, {"title": "", "caption": ""})
+            caption = data.get("caption", "").strip()
+            title = data.get("title", "").strip()
+
+            if title and caption:
+                video_desc = f"{title}. {caption}"
+            elif title:
+                video_desc = title
+            else:
+                video_desc = caption
+
+            task = {
+                "path": video,
+                "title": video_desc,
+                "hashtags": hashtags,
+            }
+            if scheduled:
+                # Add interval for each subsequent video
+                dt = base_dt + timedelta(minutes=interval_min * i)
+                task["schedule_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+                task["_raw_dt"] = dt # to populate local queue tracking
+            else:
+                task["schedule_time"] = None
+                
+            tasks.append(task)
+
         self.btn_upload.setEnabled(False)
-        self.lbl_progress.setText("🔄 Iniciando upload…")
+        self.lbl_progress.setText(f"🚀 Iniciando upload de {len(tasks)} vídeo(s) com conta '{account_name}'…")
 
         self.upload_thread = UploaderThread(
             account_name=account_name,
-            video_path=video,
-            description=description,
-            hashtags=hashtags,
+            tasks=tasks,
             browser=browser,
             headless=True,
-            schedule_time=None,
         )
         self.upload_thread.progress.connect(self.lbl_progress.setText)
         self.upload_thread.finished.connect(self._upload_done)
         self.upload_thread.start()
+
+        if scheduled:
+            # Add to local queue display
+            for t in tasks:
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                post = ScheduledPost(account_name, t["path"], t["title"], hashtags, browser, t["_raw_dt"], timer)
+                self._scheduled_posts.append(post)
+            self._refresh_queue_ui()
 
     def _upload_done(self, success: bool, msg: str):
         self.btn_upload.setEnabled(True)
         if success:
             QMessageBox.information(self, "Sucesso", msg)
-            self.lbl_progress.setText("✅ Upload concluído!")
+            self.lbl_progress.setText("✅ Processo concluído!")
         else:
             QMessageBox.critical(self, "Erro", msg)
-            self.lbl_progress.setText("❌ Falha no upload")
-
-    # ------------------------------------------------------------------
-    # TikTok-native scheduling (sends to TikTok Studio to be published)
-    # ------------------------------------------------------------------
-
-    def _start_scheduled_upload(self, account_name, video, description, hashtags, browser):
-        """Upload the video to TikTok Studio with the native schedule date."""
-        scheduled_dt = self.dt_picker.selected_datetime()
-
-        # Validate: must be at least 15 minutes in the future (TikTok requirement)
-        delta_s = (scheduled_dt - datetime.now()).total_seconds()
-        if delta_s < 15 * 60:
-            QMessageBox.warning(
-                self,
-                "Aviso",
-                "O TikTok exige que o agendamento seja pelo menos 15 minutos no futuro!",
-            )
-            return
-
-        # Format for tiktok_uploader: 'YYYY-MM-DD HH:MM:SS'
-        schedule_str = scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-        self.btn_upload.setEnabled(False)
-        self.lbl_progress.setText(f"⏰ Enviando e agendando para {scheduled_dt.strftime('%d/%m/%Y %H:%M')}…")
-
-        self.upload_thread = UploaderThread(
-            account_name=account_name,
-            video_path=video,
-            description=description,
-            hashtags=hashtags,
-            browser=browser,
-            headless=True,
-            schedule_time=schedule_str,
-        )
-        self.upload_thread.progress.connect(self.lbl_progress.setText)
-        self.upload_thread.finished.connect(self._upload_done)
-        self.upload_thread.start()
-
-        # Also add to local queue display so user can track it
-        timer = QTimer(self)   # dummy timer (won't fire, TikTok handles it)
-        timer.setSingleShot(True)
-        post = ScheduledPost(account_name, video, description, hashtags, browser, scheduled_dt, timer)
-        self._scheduled_posts.append(post)
-        self._refresh_queue_ui()
+            self.lbl_progress.setText("❌ Falha no processo")
 
     # ------------------------------------------------------------------
     # Queue display helpers
@@ -1235,4 +1289,6 @@ class UploadWidget(QWidget):
 
     def set_file(self, path: str):
         """Add a file path programmatically (called after processing)."""
+        if path not in self._video_metadata:
+            self._video_metadata[path] = {"title": "", "caption": ""}
         self.file_list.addItem(str(path))

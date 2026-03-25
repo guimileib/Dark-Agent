@@ -500,3 +500,87 @@ class TikTokUploader:
                 except Exception:
                     pass
 
+    def upload_batch(
+        self,
+        tasks: list[dict],
+        headless: bool = False,
+        browser_name: str = "chrome",
+    ) -> bool:
+        """
+        Upload multiple videos to TikTok in a single browser session.
+        Each task is a dict containing:
+          - path: str
+          - title: str
+          - hashtags: list[str] (optional)
+          - schedule_time: str (optional)
+        """
+        headless = False  # always
+
+        if not os.path.exists(self.cookies_path):
+            self.logger.error(f"Cookies not found. Please log in first.")
+            return False
+
+        videos_to_upload = []
+        for task in tasks:
+            video_path = task.get("path")
+            if not video_path or not os.path.exists(video_path):
+                self.logger.warning(f"Video file not found, skipping: {video_path}")
+                continue
+
+            description = task.get("title", "")
+            hashtags = task.get("hashtags", [])
+            
+            if hashtags:
+                tag_str = " ".join(f"#{t.lstrip('#')}" for t in hashtags if t.strip())
+                description = f"{description} {tag_str}".strip() if description else tag_str
+
+            video_dict = {"path": video_path, "description": description}
+            if task.get("schedule_time"):
+                video_dict["schedule"] = task.get("schedule_time")
+            
+            videos_to_upload.append(video_dict)
+
+        if not videos_to_upload:
+            self.logger.error("No valid videos to upload.")
+            return False
+
+        self.logger.info(f"Starting batch upload for {len(videos_to_upload)} videos...")
+
+        driver = None
+        try:
+            from tiktok_uploader.upload import upload_videos
+            from tiktok_uploader.auth import AuthBackend
+
+            driver = _make_driver(browser_name, headless=False)
+            _human_delay(1.5, 3.0)
+
+            auth = AuthBackend(cookies=self.cookies_path)
+
+            _human_delay(0.5, 1.5)
+
+            # upload_videos handles iterating over the videos list in a single browser session
+            failed = upload_videos(
+                videos=videos_to_upload,
+                auth=auth,
+                browser_agent=driver,
+            )
+
+            if not failed:
+                self.logger.info("Batch upload completed successfully.")
+                _human_delay(1.0, 2.0)
+                return True
+            else:
+                self.logger.error(f"Batch upload had failures: {failed}")
+                return False
+
+        except Exception as exc:
+            self.logger.error(f"Error during batch upload: {exc}", exc_info=True)
+            return False
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+
