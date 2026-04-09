@@ -1,7 +1,7 @@
 """Widget de legendas com preview"""
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
     QLabel, QScrollArea, QGroupBox, QComboBox, QGridLayout, QSlider, QFrame,
     QColorDialog, QListWidget, QListWidgetItem, QFileDialog, QAbstractItemView,
     QSizePolicy
@@ -333,44 +333,49 @@ class SubtitleWidget(QWidget):
         
         # Criar botões para cada estilo em grid
         self.botoes_estilos = {}
-        icons = {
-            "tiktok_classic": "🎵",
-            "tiktok_bold": "💣",
+        # Ícones melhorados (fallback visual caso n tenha render)
+        self.icons_padrao = {
+            "tiktok_classic": "📝",
+            "tiktok_bold": "💬",
             "reels_bold": "📸",
             "youtube_shorts": "▶️",
-            "clean_minimal": "✨",
-            "neon_glow": "🌟",
+            "clean_minimal": "⚪",
+            "neon_glow": "✨",
             "bold_impact": "💥",
             "gradient_wave": "🌊"
         }
         
         row, col = 0, 0
         for estilo in self.estilos:
-            icon = icons.get(estilo.id, "📝")
+            icon_emoji = self.icons_padrao.get(estilo.id, "📝")
             nome_simples = estilo.nome.replace("TikTok ", "").replace("Instagram ", "").replace("YouTube ", "")
             
-            btn = QPushButton(f"{icon}\n{nome_simples}")
+            btn = QToolButton()
+            btn.setText(f"{icon_emoji}\n{nome_simples}")
             btn.setCheckable(True)
-            btn.setFixedSize(90, 72)
+            btn.setFixedSize(110, 75)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            btn.setProperty("nome_simples", nome_simples)
+            btn.setProperty("emoji_padrao", icon_emoji)
             btn.setStyleSheet("""
-                QPushButton {
+                QToolButton {
                     background-color: rgba(30, 41, 59, 0.7);
                     color: white;
                     border: 2px solid rgba(255, 255, 255, 0.1);
                     border-radius: 12px;
                     font-weight: bold;
                     font-size: 11px;
-                    text-align: center;
                 }
-                QPushButton:hover {
+                QToolButton:hover {
                     background-color: rgba(59, 130, 246, 0.2);
                     border: 2px solid #3b82f6;
                 }
-                QPushButton:checked {
+                QToolButton:checked {
                     background-color: #3b82f6;
                     border: 2px solid #60a5fa;
                 }
             """)
+            btn.setIconSize(QSize(70, 40))
             btn.clicked.connect(lambda checked, e=estilo: self.selecionar_estilo(e))
             grid_layout.addWidget(btn, row, col)
             self.botoes_estilos[estilo.id] = btn
@@ -603,7 +608,34 @@ class SubtitleWidget(QWidget):
                 logger.debug(f"Preview carregado: {estilo_id} tamanho {tamanho}")
         
         logger.info(f"Previews carregados: {sum(len(v) for v in self.previews_cache.values())} arquivos")
-    
+        self.atualizar_icones_botoes()
+        
+    def atualizar_icones_botoes(self):
+        """Atualiza os ícones dos botões de estilo com os previews carregados (se houver)"""
+        for estilo_id, btn in self.botoes_estilos.items():
+            if estilo_id in self.previews_cache and self.previews_cache[estilo_id]:
+                tamanho_icone = min(self.previews_cache[estilo_id].keys())
+                caminho = self.previews_cache[estilo_id][tamanho_icone]
+                
+                pixmap = QPixmap(caminho)
+                if not pixmap.isNull():
+                    rect = pixmap.rect()
+                    w = min(rect.width(), int(rect.height() * 1.8))
+                    h = min(rect.height(), int(rect.width() * 0.8))
+                    x = (rect.width() - w) // 2
+                    y = (rect.height() - h) // 2
+                    cropped = pixmap.copy(x, y, w, h)
+                    
+                    btn.setIcon(QIcon(cropped))
+                    nome = btn.property("nome_simples")
+                    btn.setText(nome)
+            else:
+                nome = btn.property("nome_simples")
+                emoji = btn.property("emoji_padrao")
+                if not btn.icon().isNull():
+                    btn.setIcon(QIcon())
+                btn.setText(f"{emoji}\n{nome}")
+
     def selecionar_estilo(self, estilo):
         self.estilo_atual = estilo
         self.estilo_selecionado.emit(estilo.id)
@@ -820,6 +852,9 @@ class SubtitleWidget(QWidget):
             if not pixmap.isNull():
                 self._exibir_pixmap(pixmap)
                 logger.info(f"Preview async exibido: {path}")
+        
+        # Atualiza os botões dinamicamente assim que os previews ficam prontos
+        self.atualizar_icones_botoes()
     
     def recarregar_previews(self):
         """Recarrega previews após geração em background"""

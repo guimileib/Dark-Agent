@@ -51,6 +51,8 @@ class Settings:
         self.parallel_processing = True
         self.max_workers = 4
         
+        self.gemini_api_key = ""
+        
         # Carregar estilos
         self._estilos = self._carregar_estilos()
         
@@ -74,6 +76,7 @@ class Settings:
                     self.whisper_model = data.get("whisper_model", self.whisper_model)
                     self.whisper_device = data.get("whisper_device", self.whisper_device)
                     self.last_open_dir = data.get("last_open_dir", str(Path.home()))
+                    self.gemini_api_key = data.get("gemini_api_key", "")
             except Exception as e:
                 print(f"Erro ao carregar config: {e}")
                 self.last_open_dir = str(Path.home())
@@ -89,7 +92,8 @@ class Settings:
             "language": self.language,
             "whisper_model": self.whisper_model,
             "whisper_device": self.whisper_device,
-            "last_open_dir": self.last_open_dir
+            "last_open_dir": self.last_open_dir,
+            "gemini_api_key": self.gemini_api_key
         }
         try:
             with open(config_file, 'w', encoding='utf-8') as f:

@@ -264,12 +264,31 @@ def _make_driver(browser_name: str, headless: bool = False):
             else:
                 logger.warning("Brave binary not found — falling back to Chrome.")
 
-        driver = uc.Chrome(
-            options=options,
-            headless=headless,          # uc handles headless safely
-            version_main=version_main,  # None → auto-detect from installed Chrome
-            use_subprocess=True,        # avoids process zombie issues on Windows
-        )
+        try:
+            driver = uc.Chrome(
+                options=options,
+                headless=headless,          # uc handles headless safely
+                version_main=version_main,  # None → auto-detect from installed Chrome
+                use_subprocess=True,        # avoids process zombie issues on Windows
+            )
+        except Exception as e:
+            error_str = str(e)
+            if "Current browser version is" in error_str:
+                import re
+                m = re.search(r"Current browser version is (\d+)", error_str)
+                if m:
+                    actual_version = int(m.group(1))
+                    logger.info(f"Version mismatch detected! Retrying undetected_chromedriver with version_main={actual_version}")
+                    driver = uc.Chrome(
+                        options=options,
+                        headless=headless,
+                        version_main=actual_version,
+                        use_subprocess=True,
+                    )
+                else:
+                    raise
+            else:
+                raise
 
         # Register stealth JS to run on every new page (CDP-level)
         _apply_stealth_cdp(driver)

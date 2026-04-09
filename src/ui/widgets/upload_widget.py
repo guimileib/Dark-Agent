@@ -32,6 +32,68 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# AI Generator Thread
+# ---------------------------------------------------------------------------
+class AIGeneratorThread(QThread):
+    finished = pyqtSignal(bool, str, list)  # success, text, tags
+
+    def __init__(self, api_key: str, context: str):
+        super().__init__()
+        self.api_key = api_key
+        self.context = context
+
+    def run(self):
+        import urllib.request
+        import urllib.error
+        import json
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}"
+        
+        prompt = f"""
+Você é um especialista em redes sociais (TikTok, Reels, Shorts).
+O usuário quer uma descrição e hashtags virais para um vídeo.
+Contexto do vídeo: {self.context}
+
+Responda SOMENTE em JSON no seguinte formato (sem bloco markdown):
+{{
+  "description": "Texto chamativo, envolvente (com emojis). Não inclua as hashtags aqui.",
+  "hashtags": ["tag1", "tag2", "tag3"]
+}}
+"""
+        data = {
+            "contents": [{"parts": [{"text": prompt}]}]
+        }
+        
+        req = urllib.request.Request(
+            url, 
+            data=json.dumps(data).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        
+        try:
+            with urllib.request.urlopen(req) as response:
+                result_raw = response.read()
+                result = json.loads(result_raw)
+                
+                text_response = result["candidates"][0]["content"]["parts"][0]["text"]
+                text_response = text_response.strip()
+                
+                if text_response.startswith("```json"):
+                    text_response = text_response[7:]
+                if text_response.startswith("```"):
+                    text_response = text_response[3:]
+                if text_response.endswith("```"):
+                    text_response = text_response[:-3]
+                    
+                data_json = json.loads(text_response.strip())
+                desc = data_json.get("description", "")
+                tags = data_json.get("hashtags", [])
+                
+                self.finished.emit(True, desc, tags)
+        except Exception as e:
+            self.finished.emit(False, str(e), [])
+
+# ---------------------------------------------------------------------------
 # Custom drum-roll widget (kept for standalone use)
 # ---------------------------------------------------------------------------
 
@@ -752,6 +814,27 @@ class UploadWidget(QWidget):
         lbl_desc_row.addSpacing(6)
         lbl_desc_row.addWidget(lbl_opt_desc)
         lbl_desc_row.addStretch()
+        
+        self.btn_ai_desc = QPushButton("✨ Criar com IA")
+        self.btn_ai_desc.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ai_desc.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(139, 92, 246, 0.2);
+                color: #C4B5FD;
+                border: 1px solid #8B5CF6;
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background: #8B5CF6;
+                color: white;
+            }}
+        """)
+        self.btn_ai_desc.clicked.connect(self._generate_ai_desc)
+        lbl_desc_row.addWidget(self.btn_ai_desc)
+
         self._char_counter = QLabel("0 / 4000")
         self._char_counter.setStyleSheet(self._label_style(10, bold=False, color=self._TEXT_SEC))
         lbl_desc_row.addWidget(self._char_counter)
@@ -978,6 +1061,60 @@ class UploadWidget(QWidget):
     def _on_meta_edited(self):
         if self._current_video and self._current_video in self._video_metadata:
             self._video_metadata[self._current_video]["caption"] = self.txt_caption.toPlainText()
+
+    def _generate_ai_desc(self):
+        if not self._current_video:
+            QMessageBox.warning(self, "Aviso", "Selecione um vídeo na lista primeiro.")
+            return
+
+        try:
+            from config.settings import settings
+        except Exception:
+            QMessageBox.warning(self, "Erro", "Erro ao carregar as configurações do sistema.")
+            return
+            
+        if not hasattr(settings, 'gemini_api_key') or not settings.gemini_api_key:
+            api_key, ok = QInputDialog.getText(
+                self, "API Key do Gemini",
+                "Para usar a IA, insira sua chave de API grátis do Google Gemini:\n(Ela será salva localmente)",
+                QLineEdit.EchoMode.Password
+            )
+            if ok and api_key.strip():
+                settings.gemini_api_key = api_key.strip()
+                settings.save_config()
+            else:
+                return
+
+        context, ok = QInputDialog.getText(
+            self, "Contexto do Vídeo (IA)",
+            "Diga brevemente sobre o que é o vídeo para a IA escrever a legenda\n(Ex: '10 dicas de marketing'): ",
+        )
+        if not ok or not context.strip():
+            return
+
+        self.btn_ai_desc.setEnabled(False)
+        self.btn_ai_desc.setText("⏳ Gerando...")
+
+        self._ai_thread = AIGeneratorThread(settings.gemini_api_key, context.strip())
+        self._ai_thread.finished.connect(self._on_ai_desc_ready)
+        self._ai_thread.start()
+
+    def _on_ai_desc_ready(self, success, text, tags):
+        self.btn_ai_desc.setEnabled(True)
+        self.btn_ai_desc.setText("✨ Criar com IA")
+        
+        if not success:
+            QMessageBox.critical(self, "Erro", f"Tivemos um problema com a resposta do Gemini:\n{text}")
+            return
+
+        self.txt_caption.setPlainText(text)
+        
+        if tags:
+            self.hashtag_bar.clear()
+            for t in tags:
+                if not t.startswith("#"):
+                    t = "#" + t
+                self.hashtag_bar._add_tag(t)
 
     # ------------------------------------------------------------------
     # Caption char counter
