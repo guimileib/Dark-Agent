@@ -92,3 +92,5 @@ docs/
 # Arquivos de cookies
 src/cookies/
 
+# Configuração API KEY
+config.json

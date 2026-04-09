@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QColorDialog, QListWidget, QListWidgetItem, QFileDialog, QAbstractItemView,
     QSizePolicy
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QThread
+from PyQt6.QtCore import pyqtSignal, Qt, QThread, QSize
 from PyQt6.QtGui import QPixmap, QColor, QIcon
 from pathlib import Path
 import logging

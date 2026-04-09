@@ -1,8 +1,19 @@
 Traceback (most recent call last):
-  File "G:\DarkAgent\src\main.py", line 170, in main
-    window = MainWindow()
-             ^^^^^^^^^^^^
-  File "G:\DarkAgent\src\ui\main_window.py", line 168, in __init__
-    QTimer.singleShot(100, self.check_first_run)
-    ^^^^^^
-NameError: name 'QTimer' is not defined
+  File "G:\DarkAgent\src\ui\main_window.py", line 13, in <module>
+    from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget
+  File "G:\DarkAgent\src\ui\widgets\__init__.py", line 6, in <module>
+    from .upload_widget import UploadWidget
+  File "G:\DarkAgent\src\ui\widgets\upload_widget.py", line 24, in <module>
+    from core.uploader import (
+  File "G:\DarkAgent\src\core\uploader.py", line 26, in <module>
+    from selenium.webdriver.edge.options import Options as EdgeOptions
+ModuleNotFoundError: No module named 'selenium'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "G:\DarkAgent\src\main.py", line 147, in main
+    from ui.main_window import MainWindow
+  File "G:\DarkAgent\src\ui\main_window.py", line 19, in <module>
+    from ..config.settings import settings
+ImportError: attempted relative import beyond top-level package

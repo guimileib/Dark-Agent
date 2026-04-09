@@ -276,8 +276,6 @@ class ClipWidget(QWidget):
         max_layout.addWidget(self.duracao_max_spin)
         params_layout.addLayout(max_layout)
         
-        params_layout.addLayout(max_layout)
-        
         params_layout.addSpacing(20)
 
         # Quantidade de Clips
@@ -289,8 +287,6 @@ class ClipWidget(QWidget):
         self.qtd_clips_spin.setValue(10)
         self.qtd_clips_spin.setMinimumHeight(40)
         qtd_layout.addWidget(self.qtd_clips_spin)
-        params_layout.addLayout(qtd_layout)
-        
         params_layout.addLayout(qtd_layout)
         
         # Checkbox "Todas as possibilidades"
