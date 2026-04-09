@@ -739,33 +739,6 @@ class UploadWidget(QWidget):
         meta_layout.setSpacing(14)
         meta_layout.setContentsMargins(0, 12, 0, 0)
 
-        # Title field
-        lbl_title_row = QHBoxLayout()
-        lbl_title = QLabel("Título")
-        lbl_title.setStyleSheet(self._label_style(12))
-        lbl_opt_title = QLabel("opcional")
-        lbl_opt_title.setStyleSheet(
-            f"color: {self._TEXT_SEC}; font-size: 10px; font-weight: 500;"
-            f" background: {self._BORDER}; border-radius: 4px; padding: 1px 6px;"
-        )
-        lbl_title_row.addWidget(lbl_title)
-        lbl_title_row.addSpacing(6)
-        lbl_title_row.addWidget(lbl_opt_title)
-        lbl_title_row.addStretch()
-        meta_layout.addLayout(lbl_title_row)
-
-        self.txt_title = QLineEdit()
-        self.txt_title.setPlaceholderText("Título curto do vídeo…")
-        self.txt_title.setMinimumHeight(42)
-        self.txt_title.setStyleSheet(
-            f"QLineEdit {{ {self._field_style(12)} }}"
-            f"QLineEdit:focus {{ border-color: {self._BORDER_FOCUS}; }}"
-            f"QLineEdit::placeholder {{ color: {self._TEXT_SEC}; }}"
-        )
-        meta_layout.addWidget(self.txt_title)
-
-        meta_layout.addWidget(self._divider())
-
         # Description field
         lbl_desc_row = QHBoxLayout()
         lbl_desc = QLabel("Descrição")
@@ -973,7 +946,6 @@ class UploadWidget(QWidget):
         
         # Connect signals for per-video metadata
         self.file_list.currentItemChanged.connect(self._on_file_selected)
-        self.txt_title.textChanged.connect(self._on_meta_edited)
         self.txt_caption.textChanged.connect(self._on_meta_edited)
         self._update_meta_fields()
 
@@ -990,30 +962,21 @@ class UploadWidget(QWidget):
 
     def _update_meta_fields(self):
         if not self._current_video:
-            self.txt_title.blockSignals(True)
             self.txt_caption.blockSignals(True)
-            self.txt_title.clear()
             self.txt_caption.clear()
-            self.txt_title.setEnabled(False)
             self.txt_caption.setEnabled(False)
-            self.txt_title.blockSignals(False)
             self.txt_caption.blockSignals(False)
             return
 
-        self.txt_title.setEnabled(True)
         self.txt_caption.setEnabled(True)
-        data = self._video_metadata.get(self._current_video, {"title": "", "caption": ""})
-        self.txt_title.blockSignals(True)
+        data = self._video_metadata.get(self._current_video, {"caption": ""})
         self.txt_caption.blockSignals(True)
-        self.txt_title.setText(data.get("title", ""))
         self.txt_caption.setPlainText(data.get("caption", ""))
-        self.txt_title.blockSignals(False)
         self.txt_caption.blockSignals(False)
         self._on_caption_changed()
 
     def _on_meta_edited(self):
         if self._current_video and self._current_video in self._video_metadata:
-            self._video_metadata[self._current_video]["title"] = self.txt_title.text()
             self._video_metadata[self._current_video]["caption"] = self.txt_caption.toPlainText()
 
     # ------------------------------------------------------------------
@@ -1114,7 +1077,7 @@ class UploadWidget(QWidget):
         if filenames:
             for f in filenames:
                 if f not in self._video_metadata:
-                    self._video_metadata[f] = {"title": "", "caption": ""}
+                    self._video_metadata[f] = {"caption": ""}
             self.file_list.addItems(filenames)
 
     def _remove_selected_files(self):
@@ -1186,20 +1149,12 @@ class UploadWidget(QWidget):
                 return
 
         for i, video in enumerate(files):
-            data = self._video_metadata.get(video, {"title": "", "caption": ""})
+            data = self._video_metadata.get(video, {"caption": ""})
             caption = data.get("caption", "").strip()
-            title = data.get("title", "").strip()
-
-            if title and caption:
-                video_desc = f"{title}. {caption}"
-            elif title:
-                video_desc = title
-            else:
-                video_desc = caption
 
             task = {
                 "path": video,
-                "title": video_desc,
+                "title": caption,
                 "hashtags": hashtags,
             }
             if scheduled:
@@ -1290,5 +1245,5 @@ class UploadWidget(QWidget):
     def set_file(self, path: str):
         """Add a file path programmatically (called after processing)."""
         if path not in self._video_metadata:
-            self._video_metadata[path] = {"title": "", "caption": ""}
+            self._video_metadata[path] = {"caption": ""}
         self.file_list.addItem(str(path))

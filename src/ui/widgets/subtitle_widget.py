@@ -403,36 +403,14 @@ class SubtitleWidget(QWidget):
         self.preview_canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_canvas.setStyleSheet("""
             QLabel {
-                background-color: #000;
-                border-radius: 12px;
-                border: 2px solid #334155;
+                background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, stop:0 #1e293b, stop:1 #0f172a);
+                border-radius: 16px;
+                border: 2px solid rgba(59, 130, 246, 0.4);
+                padding: 4px;
             }
         """)
         self.preview_canvas.setText("Selecione um estilo")
         right_layout.addWidget(self.preview_canvas, 3)  # peso 3 = ocupa a maior parte
-        
-        # Slider de tempo (visual apenas)
-        time_layout = QHBoxLayout()
-        time_layout.addWidget(QLabel("00:00"))
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setEnabled(False)
-        slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                height: 6px;
-                background: #334155;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #3b82f6;
-                width: 16px;
-                height: 16px;
-                margin: -5px 0;
-                border-radius: 8px;
-            }
-        """)
-        time_layout.addWidget(slider)
-        time_layout.addWidget(QLabel("00:10"))
-        right_layout.addLayout(time_layout)
         
         # Configurações — dentro de QScrollArea para não cortar em telas pequenas
         config_group = QWidget()
@@ -441,22 +419,67 @@ class SubtitleWidget(QWidget):
         config_layout.setSpacing(6)
 
         # Tamanho da Fonte
-        config_layout.addWidget(QLabel("Tamanho da Fonte:"))
+        lbl_tamanho = QLabel("Tamanho da Fonte:")
+        lbl_tamanho.setStyleSheet("color: white; font-weight: bold;")
+        config_layout.addWidget(lbl_tamanho)
         self.tamanho_combo = QComboBox()
+        self.tamanho_combo.setStyleSheet("""
+            QComboBox {
+                background-color: rgba(30, 41, 59, 0.8);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QComboBox:hover {
+                border: 1px solid #3b82f6;
+            }
+        """)
         self.tamanho_combo.addItems([str(s) for s in [12, 18, 24, 28, 32, 36, 40, 44, 48]])
         self.tamanho_combo.setCurrentText("48")
         self.tamanho_combo.currentTextChanged.connect(self.atualizar_tamanho)
         config_layout.addWidget(self.tamanho_combo)
 
         # Posição
-        config_layout.addWidget(QLabel("Posição da Legenda:"))
+        lbl_posicao = QLabel("Posição da Legenda:")
+        lbl_posicao.setStyleSheet("color: white; font-weight: bold; margin-top: 5px;")
+        config_layout.addWidget(lbl_posicao)
         self.posicao_combo = QComboBox()
+        self.posicao_combo.setStyleSheet("""
+            QComboBox {
+                background-color: rgba(30, 41, 59, 0.8);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QComboBox:hover {
+                border: 1px solid #3b82f6;
+            }
+        """)
         self.posicao_combo.addItems(["Embaixo", "Centro", "Topo"])
         config_layout.addWidget(self.posicao_combo)
 
         # Cor do Texto
-        config_layout.addWidget(QLabel("Cor do Texto:"))
-        self.btn_cor = QPushButton("Alterar Cor")
+        lbl_cor = QLabel("Cor do Texto:")
+        lbl_cor.setStyleSheet("color: white; font-weight: bold; margin-top: 5px;")
+        config_layout.addWidget(lbl_cor)
+        self.btn_cor = QPushButton("🎨 Alterar Cor")
+        self.btn_cor.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cor.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(30, 41, 59, 0.8);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 8px;
+                padding: 8px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: rgba(59, 130, 246, 0.2);
+                border: 1px solid #3b82f6;
+            }
+        """)
         self.btn_cor.clicked.connect(self.selecionar_cor)
         config_layout.addWidget(self.btn_cor)
 
@@ -605,6 +628,33 @@ class SubtitleWidget(QWidget):
                 self.tamanho_combo.setCurrentIndex(self.tamanho_combo.count() - 1)
                 
             self.tamanho_combo.blockSignals(False)
+            
+        # Atualizar visual do botão de cor
+        if hasattr(estilo, "cor_primaria"):
+            cor_ass = estilo.cor_primaria
+            cor_hex = "#FFFFFF"
+            if len(cor_ass) >= 8:
+                b, g, r = cor_ass[2:4], cor_ass[4:6], cor_ass[6:8]
+                cor_hex = f"#{r}{g}{b}"
+            
+            try:
+                cor_atual = QColor(cor_hex)
+                self.btn_cor.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {cor_atual.name()};
+                        color: {'#000000' if cor_atual.lightness() > 128 else '#ffffff'};
+                        border: 2px solid rgba(255, 255, 255, 0.5);
+                        border-radius: 8px;
+                        padding: 8px;
+                        font-weight: bold;
+                    }}
+                    QPushButton:hover {{
+                        border: 2px solid #3b82f6;
+                    }}
+                """)
+                self.btn_cor.setText(f"🎨 Cor: {cor_atual.name().upper()}")
+            except Exception as e:
+                logger.debug(f"Erro ao parsear cor: {e}")
         
         # Atualizar preview
         self.atualizar_preview()
@@ -645,8 +695,20 @@ class SubtitleWidget(QWidget):
             self.estilo_atual.cor_primaria = cor_ass_nova
             
             # Atualizar botão com a cor (opcional, visual feedback)
-            self.btn_cor.setStyleSheet(f"background-color: {nova_cor.name()}; color: {'black' if nova_cor.lightness() > 128 else 'white'}; border: 1px solid #ccc;")
-            self.btn_cor.setText(f"Cor: {nova_cor.name().upper()}")
+            self.btn_cor.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {nova_cor.name()};
+                    color: {'#000000' if nova_cor.lightness() > 128 else '#ffffff'};
+                    border: 2px solid rgba(255, 255, 255, 0.5);
+                    border-radius: 8px;
+                    padding: 8px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    border: 2px solid #3b82f6;
+                }}
+            """)
+            self.btn_cor.setText(f"🎨 Cor: {nova_cor.name().upper()}")
             
             # Forçar atualização do preview
             self.atualizar_preview(force=True)
