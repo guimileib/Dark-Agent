@@ -93,4 +93,4 @@ docs/
 src/cookies/
 
 # Configuração API KEY
-config.json
+src/config/config.json
