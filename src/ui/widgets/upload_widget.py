@@ -47,7 +47,7 @@ class AIGeneratorThread(QThread):
         import urllib.error
         import json
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
         
         prompt = f"""
 Você é um especialista em redes sociais (TikTok, Reels, Shorts).
@@ -90,6 +90,23 @@ Responda SOMENTE em JSON no seguinte formato (sem bloco markdown):
                 tags = data_json.get("hashtags", [])
                 
                 self.finished.emit(True, desc, tags)
+        except urllib.error.HTTPError as e:
+            try:
+                error_body = e.read().decode("utf-8")
+                # Try to parse it as JSON to get the actual message
+                err_json = json.loads(error_body)
+                if "error" in err_json and "message" in err_json["error"]:
+                    msg = f"HTTP {e.code}: {err_json['error']['message']}"
+                else:
+                    msg = f"HTTP {e.code}: {error_body}"
+            except:
+                msg = str(e)
+            
+            # Se for 403 e a chave estiver incorreta ou sem permissões
+            if e.code == 403:
+                msg += "\n\nDica: Mude sua chave de API nas configurações ou verifique se você possui os acessos necessários na conta do Google. Caso a chave esteja errada, apague-a no config.json gerado na pasta src/config para que o programa peça novamente."
+                
+            self.finished.emit(False, msg, [])
         except Exception as e:
             self.finished.emit(False, str(e), [])
 

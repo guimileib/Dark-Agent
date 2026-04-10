@@ -26,6 +26,43 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class UpdateCheckerThread(QThread):
+    """Thread para verificar atualizações no repositório GitHub via git sem travar a UI"""
+    
+    update_available = pyqtSignal(str, str)  # hash_local, hash_remoto
+    
+    def run(self):
+        try:
+            import subprocess
+            from pathlib import Path
+            import sys
+            
+            # /src/ui/main_window.py -> /src/ui -> /src -> /
+            base_dir = Path(__file__).parent.parent.parent
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            
+            # Pegar hash local
+            out_local = subprocess.run(
+                ["git", "rev-parse", "HEAD"], 
+                cwd=base_dir, capture_output=True, text=True, check=True, creationflags=flags
+            )
+            hash_local = out_local.stdout.strip()
+            
+            # Pegar hash remoto (da origin/HEAD)
+            out_remote = subprocess.run(
+                ["git", "ls-remote", "origin", "HEAD"], 
+                cwd=base_dir, capture_output=True, text=True, check=True, creationflags=flags
+            )
+            hash_remoto = out_remote.stdout.split()[0].strip() if out_remote.stdout else ""
+            
+            # Se for diferente, tem commit novo na origin (considerando push/pull default)
+            if hash_remoto and hash_local != hash_remoto:
+                self.update_available.emit(hash_local, hash_remoto)
+                
+        except Exception as e:
+            logger.debug(f"Aviso - Não foi possível conferir atualizações via Git: {e}")
+
+
 class PreviewGeneratorThread(QThread):
     """Thread para gerar previews de legendas em segundo plano"""
     
@@ -259,6 +296,9 @@ class MainWindow(QMainWindow):
         # Verificar primeiro uso
         QTimer.singleShot(100, self.check_first_run)
         
+        # Verificar atualizações no repositório em segundo plano (após 3 seg)
+        QTimer.singleShot(3000, self.check_for_updates)
+        
     def check_first_run(self):
         """Verifica se é a primeira execução e mostra tutorial"""
         if settings.first_run:
@@ -272,6 +312,67 @@ class MainWindow(QMainWindow):
                 settings.save_config()
             except Exception as e:
                 logger.error(f"Erro ao mostrar onboarding: {e}")
+
+    def check_for_updates(self):
+        """Verifica atualizações no repositório via thread em background"""
+        try:
+            self.thread_update = UpdateCheckerThread()
+            self.thread_update.update_available.connect(self.on_update_available)
+            self.thread_update.start()
+        except Exception as e:
+            logger.warning(f"Erro ao iniciar verificador de atualizacoes: {e}")
+
+    def on_update_available(self, local_hash, remote_hash):
+        """Mostra janela quando atualização for encontrada"""
+        msg = (
+            "🚀 Uma nova atualização está disponível no repositório GitHub!\n\n"
+            "Deseja baixar e aplicar a atualização agora usando git pull?"
+        )
+        resposta = QMessageBox.question(
+            self,
+            "Atualização Disponível",
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if resposta == QMessageBox.StandardButton.Yes:
+            self.aplicar_atualizacao()
+
+    def aplicar_atualizacao(self):
+        """Usa git pull para atualizar o repositório"""
+        try:
+            import subprocess
+            from pathlib import Path
+            import sys
+            
+            base_dir = Path(__file__).parent.parent.parent
+            self.status_label.setText("Baixando atualização do repositório...")
+            self.repaint() # Força a interface a atualizar o label
+            
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            
+            proc = subprocess.run(
+                ["git", "pull"], 
+                cwd=base_dir, capture_output=True, text=True, creationflags=flags
+            )
+            
+            if proc.returncode == 0:
+                QMessageBox.information(
+                    self, 
+                    "Sucesso ✨", 
+                    "A atualização foi baixada e aplicada com sucesso!\n\n"
+                    "Por favor, feche e abra o aplicativo novamente para carregar as modificações."
+                )
+            else:
+                QMessageBox.warning(
+                    self, 
+                    "Erro ao Atualizar", 
+                    f"Ocorreu um erro ao tentar executar o git pull:\n{proc.stderr}"
+                )
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ❌", f"Erro fatal ao tentar atualizar: {e}")
+        finally:
+            self.status_label.setText("")
 
     def show_centered_message(self, title, message, icon=QMessageBox.Icon.Information):
         """Mostra uma mensagem centralizada na janela"""

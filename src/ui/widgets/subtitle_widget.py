@@ -488,6 +488,29 @@ class SubtitleWidget(QWidget):
         self.btn_cor.clicked.connect(self.selecionar_cor)
         config_layout.addWidget(self.btn_cor)
 
+        # Cor da Borda
+        lbl_cor_borda = QLabel("Cor da Borda:")
+        lbl_cor_borda.setStyleSheet("color: white; font-weight: bold; margin-top: 5px;")
+        config_layout.addWidget(lbl_cor_borda)
+        self.btn_cor_borda = QPushButton("🎨 Alterar Cor da Borda")
+        self.btn_cor_borda.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cor_borda.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(30, 41, 59, 0.8);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 8px;
+                padding: 8px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: rgba(59, 130, 246, 0.2);
+                border: 1px solid #3b82f6;
+            }
+        """)
+        self.btn_cor_borda.clicked.connect(self.selecionar_cor_borda)
+        config_layout.addWidget(self.btn_cor_borda)
+
         config_layout.addStretch()
 
         # Scroll area para o grupo de configs
@@ -611,30 +634,52 @@ class SubtitleWidget(QWidget):
         self.atualizar_icones_botoes()
         
     def atualizar_icones_botoes(self):
-        """Atualiza os ícones dos botões de estilo com os previews carregados (se houver)"""
+        """Atualiza os ícones dos botões exibindo-os com as cores do estilo."""
         for estilo_id, btn in self.botoes_estilos.items():
-            if estilo_id in self.previews_cache and self.previews_cache[estilo_id]:
-                tamanho_icone = min(self.previews_cache[estilo_id].keys())
-                caminho = self.previews_cache[estilo_id][tamanho_icone]
+            nome = btn.property("nome_simples")
+            emoji = btn.property("emoji_padrao")
+            
+            # Limpar icone qpixmap se houver
+            if not btn.icon().isNull():
+                btn.setIcon(QIcon())
+            
+            estilo = next((e for e in self.estilos if e.id == estilo_id), None)
+            
+            cor_hex = "#FFFFFF"
+            cor_borda = "rgba(255, 255, 255, 0.1)"
+            
+            if estilo:
+                if len(estilo.cor_primaria) >= 8:
+                    b, g, r = estilo.cor_primaria[2:4], estilo.cor_primaria[4:6], estilo.cor_primaria[6:8]
+                    cor_hex = f"#{r}{g}{b}"
                 
-                pixmap = QPixmap(caminho)
-                if not pixmap.isNull():
-                    rect = pixmap.rect()
-                    w = min(rect.width(), int(rect.height() * 1.8))
-                    h = min(rect.height(), int(rect.width() * 0.8))
-                    x = (rect.width() - w) // 2
-                    y = (rect.height() - h) // 2
-                    cropped = pixmap.copy(x, y, w, h)
-                    
-                    btn.setIcon(QIcon(cropped))
-                    nome = btn.property("nome_simples")
-                    btn.setText(nome)
-            else:
-                nome = btn.property("nome_simples")
-                emoji = btn.property("emoji_padrao")
-                if not btn.icon().isNull():
-                    btn.setIcon(QIcon())
-                btn.setText(f"{emoji}\n{nome}")
+                # Neon glow usa secundária para destaque (verde neon etc)
+                if estilo_id == "neon_glow" and len(estilo.cor_secundaria) >= 8:
+                    b, g, r = estilo.cor_secundaria[2:4], estilo.cor_secundaria[4:6], estilo.cor_secundaria[6:8]
+                    cor_hex = f"#{r}{g}{b}"
+
+                cor_borda = cor_hex
+
+            btn.setStyleSheet(f"""
+                QToolButton {{
+                    background-color: rgba(30, 41, 59, 0.7);
+                    color: {cor_hex};
+                    border: 2px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 12px;
+                    font-weight: bold;
+                    font-size: 13px;
+                }}
+                QToolButton:hover {{
+                    background-color: rgba(59, 130, 246, 0.2);
+                    border: 2px solid {cor_borda};
+                }}
+                QToolButton:checked {{
+                    background-color: rgba(255, 255, 255, 0.1);
+                    border: 2px solid {cor_borda};
+                    border-bottom: 4px solid {cor_borda};
+                }}
+            """)
+            btn.setText(f"{emoji}\n{nome}")
 
     def selecionar_estilo(self, estilo):
         self.estilo_atual = estilo
@@ -687,6 +732,39 @@ class SubtitleWidget(QWidget):
                 self.btn_cor.setText(f"🎨 Cor: {cor_atual.name().upper()}")
             except Exception as e:
                 logger.debug(f"Erro ao parsear cor: {e}")
+                
+        # Atualizar visual do botão de cor da borda
+        if hasattr(estilo, "cor_borda"):
+            cor_ass_borda = estilo.cor_borda
+            cor_hex_borda = "#000000"
+            if len(cor_ass_borda) >= 8:
+                b, g, r = cor_ass_borda[2:4], cor_ass_borda[4:6], cor_ass_borda[6:8]
+                cor_hex_borda = f"#{r}{g}{b}"
+            
+            try:
+                cor_atual_b = QColor(cor_hex_borda)
+                self.btn_cor_borda.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {cor_atual_b.name()};
+                        color: {'#000000' if cor_atual_b.lightness() > 128 else '#ffffff'};
+                        border: 2px solid rgba(255, 255, 255, 0.5);
+                        border-radius: 8px;
+                        padding: 8px;
+                        font-weight: bold;
+                    }}
+                    QPushButton:hover {{
+                        border: 2px solid #3b82f6;
+                    }}
+                """)
+                self.btn_cor_borda.setText(f"🎨 Borda: {cor_atual_b.name().upper()}")
+                
+                # Só destacar ou mostrar se tiver borda
+                if getattr(estilo, "borda_espessura", 0) > 0 or estilo.id == "neon_glow":
+                    self.btn_cor_borda.setVisible(True)
+                else:
+                    self.btn_cor_borda.setVisible(False)
+            except Exception as e:
+                logger.debug(f"Erro ao parsear cor da borda: {e}")
         
         # Atualizar preview
         self.atualizar_preview()
@@ -741,6 +819,47 @@ class SubtitleWidget(QWidget):
                 }}
             """)
             self.btn_cor.setText(f"🎨 Cor: {nova_cor.name().upper()}")
+            self.atualizar_icones_botoes()
+            
+            # Forçar atualização do preview
+            self.atualizar_preview(force=True)
+
+    def selecionar_cor_borda(self):
+        """Abre diálogo para selecionar cor da borda"""
+        if not self.estilo_atual:
+            return
+            
+        cor_ass = self.estilo_atual.cor_borda
+        cor_hex = "#000000"
+        if len(cor_ass) >= 8:
+            b, g, r = cor_ass[2:4], cor_ass[4:6], cor_ass[6:8]
+            cor_hex = f"#{r}{g}{b}"
+            
+        cor_atual = QColor(cor_hex)
+        nova_cor = QColorDialog.getColor(cor_atual, self, "Selecione a Cor da Borda")
+        
+        if nova_cor.isValid():
+            r = f"{nova_cor.red():02X}"
+            g = f"{nova_cor.green():02X}"
+            b = f"{nova_cor.blue():02X}"
+            
+            cor_ass_nova = f"&H{b}{g}{r}"
+            self.estilo_atual.cor_borda = cor_ass_nova
+            
+            self.btn_cor_borda.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {nova_cor.name()};
+                    color: {'#000000' if nova_cor.lightness() > 128 else '#ffffff'};
+                    border: 2px solid rgba(255, 255, 255, 0.5);
+                    border-radius: 8px;
+                    padding: 8px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    border: 2px solid #3b82f6;
+                }}
+            """)
+            self.btn_cor_borda.setText(f"🎨 Borda: {nova_cor.name().upper()}")
             
             # Forçar atualização do preview
             self.atualizar_preview(force=True)
