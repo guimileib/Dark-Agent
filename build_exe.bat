@@ -4,6 +4,7 @@ echo Building DarkAgent Pro Launcher...
 echo ==========================================
 
 :: Ensure PyInstaller is installed
+call venv\Scripts\activate.bat
 pip install pyinstaller
 
 :: Clean previous builds

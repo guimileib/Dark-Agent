@@ -429,7 +429,7 @@ class TikTokUploader:
         hashtags: list[str] | None = None,
         headless: bool = False,
         browser_name: str = "chrome",
-        schedule_time: str | None = None,
+        schedule_time=None,
     ) -> bool:
         """
         Upload *video_path* to TikTok using the account's saved cookies.
