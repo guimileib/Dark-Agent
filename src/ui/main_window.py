@@ -41,6 +41,15 @@ class UpdateCheckerThread(QThread):
             base_dir = Path(__file__).parent.parent.parent
             flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             
+            # Pegar branch atual
+            out_branch = subprocess.run(
+                ["git", "branch", "--show-current"], 
+                cwd=base_dir, capture_output=True, text=True, check=True, creationflags=flags
+            )
+            current_branch = out_branch.stdout.strip()
+            if not current_branch:
+                current_branch = "main"
+                
             # Pegar hash local
             out_local = subprocess.run(
                 ["git", "rev-parse", "HEAD"], 
@@ -48,16 +57,27 @@ class UpdateCheckerThread(QThread):
             )
             hash_local = out_local.stdout.strip()
             
-            # Pegar hash remoto (da origin/HEAD)
+            # Pegar hash remoto da branch atual
             out_remote = subprocess.run(
-                ["git", "ls-remote", "origin", "HEAD"], 
+                ["git", "ls-remote", "origin", current_branch], 
                 cwd=base_dir, capture_output=True, text=True, check=True, creationflags=flags
             )
-            hash_remoto = out_remote.stdout.split()[0].strip() if out_remote.stdout else ""
             
-            # Se for diferente, tem commit novo na origin (considerando push/pull default)
+            if not out_remote.stdout:
+                return
+                
+            hash_remoto = out_remote.stdout.split()[0].strip()
+            
             if hash_remoto and hash_local != hash_remoto:
-                self.update_available.emit(hash_local, hash_remoto)
+                # Verificar se já temos esse commit localmente (estamos apenas 'ahead' e não 'behind')
+                check_local = subprocess.run(
+                    ["git", "cat-file", "-e", hash_remoto],
+                    cwd=base_dir, capture_output=True, creationflags=flags
+                )
+                
+                # returncode != 0 significa que não temos esse commit no repo local -> é uma atualização real
+                if check_local.returncode != 0:
+                    self.update_available.emit(hash_local, hash_remoto)
                 
         except Exception as e:
             logger.debug(f"Aviso - Não foi possível conferir atualizações via Git: {e}")

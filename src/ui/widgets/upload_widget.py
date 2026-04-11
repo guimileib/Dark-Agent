@@ -37,22 +37,25 @@ logger = logging.getLogger(__name__)
 class AIGeneratorThread(QThread):
     finished = pyqtSignal(bool, str, list)  # success, text, tags
 
-    def __init__(self, api_key: str, context: str):
+    def __init__(self, api_key: str, context: str, language: str = "Português"):
         super().__init__()
         self.api_key = api_key
         self.context = context
+        self.language = language
 
     def run(self):
         import urllib.request
         import urllib.error
         import json
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={self.api_key}"
         
         prompt = f"""
 Você é um especialista em redes sociais (TikTok, Reels, Shorts).
 O usuário quer uma descrição e hashtags virais para um vídeo.
 Contexto do vídeo: {self.context}
+
+Por favor, escreva o conteúdo inteiramente no idioma: {self.language}.
 
 Responda SOMENTE em JSON no seguinte formato (sem bloco markdown):
 {{
@@ -239,8 +242,11 @@ class InlineDateTimePicker(QWidget):
         self._time_edit.setStyleSheet(
             "QTimeEdit { background: transparent; border: none; color: #e2e8f0;"
             " font-size: 16px; font-weight: bold; }"
-            "QTimeEdit::up-button { width: 16px; }"
-            "QTimeEdit::down-button { width: 16px; }"
+            "QTimeEdit::up-button { width: 24px; border-radius: 4px; border: 1px solid #334155; background: #1e293b; margin-bottom: 1px; }"
+            "QTimeEdit::down-button { width: 24px; border-radius: 4px; border: 1px solid #334155; background: #1e293b; margin-top: 1px; }"
+            "QTimeEdit::up-button:hover, QTimeEdit::down-button:hover { background: #3b82f6; }"
+            "QTimeEdit::up-arrow { width: 12px; height: 12px; }"
+            "QTimeEdit::down-arrow { width: 12px; height: 12px; }"
         )
         time_layout.addWidget(self._time_edit)
         row.addWidget(time_frame)
@@ -277,6 +283,25 @@ class InlineDateTimePicker(QWidget):
 
         layout.addLayout(row)
 
+        # Favorite times row
+        fav_row = QHBoxLayout()
+        fav_row.setSpacing(6)
+        lbl_fav = QLabel("Horários favoritos:")
+        lbl_fav.setStyleSheet("color: #64748b; font-size: 11px;")
+        fav_row.addWidget(lbl_fav)
+        
+        for t in ["09:00", "12:00", "15:00", "18:00", "20:00"]:
+            btn = QPushButton(t)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton { background: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 8px; padding: 2px 8px; font-size: 11px; }"
+                "QPushButton:hover { background: #334155; color: #e2e8f0; }"
+            )
+            btn.clicked.connect(lambda checked, time=t: self._set_favorite_time(time))
+            fav_row.addWidget(btn)
+        fav_row.addStretch()
+        layout.addLayout(fav_row)
+
         # Summary label
         self._lbl_summary = QLabel()
         self._lbl_summary.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -294,6 +319,10 @@ class InlineDateTimePicker(QWidget):
         self._lbl_summary.setText(
             f"📌  Agendado para: {dt.strftime('%A, %d/%m/%Y às %H:%M')}"
         )
+
+    def _set_favorite_time(self, time_str: str):
+        h, m = map(int, time_str.split(':'))
+        self._time_edit.setTime(QTime(h, m))
 
     def selected_datetime(self) -> datetime:
         qd = self._date_edit.date()
@@ -832,6 +861,20 @@ class UploadWidget(QWidget):
         lbl_desc_row.addWidget(lbl_opt_desc)
         lbl_desc_row.addStretch()
         
+        self.combo_ai_lang = QComboBox()
+        self.combo_ai_lang.addItems(["Português", "English", "Español", "Deutsch", "Français", "Italiano", "Русский", "中文"])
+        self.combo_ai_lang.setStyleSheet(f"""
+            QComboBox {{
+                background: transparent; border: 1px solid {self._BORDER}; border-radius: 6px;
+                color: {self._TEXT_SEC}; font-size: 11px; padding: 3px 6px;
+            }}
+            QComboBox::drop-down {{ width: 20px; border: none; }}
+            QComboBox QAbstractItemView {{
+                background: {self._BG_CARD}; color: {self._TEXT_PRI}; selection-background-color: {self._ACCENT};
+            }}
+        """)
+        lbl_desc_row.addWidget(self.combo_ai_lang)
+        
         self.btn_ai_desc = QPushButton("✨ Criar com IA")
         self.btn_ai_desc.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_ai_desc.setStyleSheet(f"""
@@ -851,6 +894,26 @@ class UploadWidget(QWidget):
         """)
         self.btn_ai_desc.clicked.connect(self._generate_ai_desc)
         lbl_desc_row.addWidget(self.btn_ai_desc)
+
+        self.btn_change_api_key = QPushButton("🔑")
+        self.btn_change_api_key.setToolTip("Alterar API Key do Gemini")
+        self.btn_change_api_key.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_change_api_key.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {self._TEXT_SEC};
+                border: 1px solid {self._BORDER};
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background: {self._BORDER};
+                color: {self._TEXT_PRI};
+            }}
+        """)
+        self.btn_change_api_key.clicked.connect(self._change_api_key)
+        lbl_desc_row.addWidget(self.btn_change_api_key)
 
         self._char_counter = QLabel("0 / 4000")
         self._char_counter.setStyleSheet(self._label_style(10, bold=False, color=self._TEXT_SEC))
@@ -1079,6 +1142,24 @@ class UploadWidget(QWidget):
         if self._current_video and self._current_video in self._video_metadata:
             self._video_metadata[self._current_video]["caption"] = self.txt_caption.toPlainText()
 
+    def _change_api_key(self):
+        try:
+            from config.settings import settings
+        except Exception:
+            return
+            
+        current_key = getattr(settings, 'gemini_api_key', '')
+        api_key, ok = QInputDialog.getText(
+            self, "Alterar API Key do Gemini",
+            "Insira sua nova chave de API do Google Gemini:\n(Se for inválida ou vazia, pediremos novamente no uso)",
+            QLineEdit.EchoMode.Password,
+            text=current_key
+        )
+        if ok:
+            settings.gemini_api_key = api_key.strip()
+            settings.save_config()
+            QMessageBox.information(self, "Sucesso", "API Key salva com sucesso!")
+
     def _generate_ai_desc(self):
         if not self._current_video:
             QMessageBox.warning(self, "Aviso", "Selecione um vídeo na lista primeiro.")
@@ -1112,7 +1193,8 @@ class UploadWidget(QWidget):
         self.btn_ai_desc.setEnabled(False)
         self.btn_ai_desc.setText("⏳ Gerando...")
 
-        self._ai_thread = AIGeneratorThread(settings.gemini_api_key, context.strip())
+        lang = self.combo_ai_lang.currentText()
+        self._ai_thread = AIGeneratorThread(settings.gemini_api_key, context.strip(), language=lang)
         self._ai_thread.finished.connect(self._on_ai_desc_ready)
         self._ai_thread.start()
 
