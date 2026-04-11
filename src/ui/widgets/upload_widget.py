@@ -1396,7 +1396,7 @@ class UploadWidget(QWidget):
             if scheduled:
                 # Add interval for each subsequent video
                 dt = base_dt + timedelta(minutes=interval_min * i)
-                task["schedule_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+                task["schedule_time"] = dt
                 task["_raw_dt"] = dt # to populate local queue tracking
             else:
                 task["schedule_time"] = None
