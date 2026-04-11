@@ -415,7 +415,7 @@ class SubtitleWidget(QWidget):
             }
         """)
         self.preview_canvas.setText("Selecione um estilo")
-        right_layout.addWidget(self.preview_canvas, 3)  # peso 3 = ocupa a maior parte
+        right_layout.addWidget(self.preview_canvas, 2)  # Diminui o peso visual do canvas
         
         # Configurações — dentro de QScrollArea para não cortar em telas pequenas
         config_group = QWidget()
@@ -441,7 +441,7 @@ class SubtitleWidget(QWidget):
             }
         """)
         self.tamanho_combo.addItems([str(s) for s in [12, 18, 24, 28, 32, 36, 40, 44, 48]])
-        self.tamanho_combo.setCurrentText("48")
+        self.tamanho_combo.setCurrentText("18")
         self.tamanho_combo.currentTextChanged.connect(self.atualizar_tamanho)
         config_layout.addWidget(self.tamanho_combo)
 
@@ -520,7 +520,7 @@ class SubtitleWidget(QWidget):
         config_scroll.setFrameShape(QFrame.Shape.NoFrame)
         config_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         config_scroll.setStyleSheet("background: transparent;")
-        right_layout.addWidget(config_scroll, 1)
+        right_layout.addWidget(config_scroll, 3)  # Aumenta peso das configurações para elas não sumirem
         
         layout.addWidget(right_container, 6) # 60% width
         
