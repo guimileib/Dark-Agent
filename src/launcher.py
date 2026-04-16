@@ -6,14 +6,28 @@ import shutil
 import ctypes
 import requests
 from pathlib import Path
-from tqdm import tqdm
 
-# Configure logging for the launcher
+# ---------------------------------------------------------------------------
+# Determine the real application directory (where the .exe lives or project root)
+# ---------------------------------------------------------------------------
+
+def _get_app_dir() -> Path:
+    """Return the directory where the .exe lives (frozen) or project root (dev)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+APP_DIR = _get_app_dir()
+LOGS_DIR = APP_DIR / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Configure logging to a predictable location
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('launcher.log', encoding='utf-8'),
+        logging.FileHandler(str(LOGS_DIR / 'launcher.log'), encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -23,153 +37,160 @@ logger = logging.getLogger("Launcher")
 FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 FFMPEG_DIR_NAME = "ffmpeg"
 
+# Windows MessageBox constants
+MB_OK = 0x00
+MB_YESNO = 0x04
+MB_ICONERROR = 0x10
+MB_ICONWARNING = 0x30
+MB_ICONINFORMATION = 0x40
+IDYES = 6
+
+
 def is_admin():
     """Check if the script is running with administrative privileges."""
+    if sys.platform != "win32":
+        return False
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
+    except Exception:
         return False
 
+
 def show_message_box(title, message, style=0):
-    """
-    Show a native Windows message box.
-    Styles:
-    0 : OK
-    1 : OK | Cancel
-    4 : Yes | No
-    Icon styles can be added (e.g., | 0x40 for Information, | 0x30 for Warning)
-    Returns the button clicked (6=Yes, 7=No, 1=OK, 2=Cancel)
-    """
+    """Show a native Windows message box (no-op on non-Windows)."""
+    if sys.platform != "win32":
+        print(f"[{title}] {message}")
+        return 0
     return ctypes.windll.user32.MessageBoxW(0, message, title, style)
+
 
 def check_ffmpeg():
     """Check if FFmpeg is available in PATH or local directory."""
     # Check system PATH
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):
         return True
-    
-    # Check local directory
-    local_ffmpeg = Path(os.getcwd()) / FFMPEG_DIR_NAME / "bin" / "ffmpeg.exe"
-    local_ffprobe = Path(os.getcwd()) / FFMPEG_DIR_NAME / "bin" / "ffprobe.exe"
-    
+
+    # Check local directory (relative to the app, not CWD)
+    local_ffmpeg = APP_DIR / FFMPEG_DIR_NAME / "bin" / "ffmpeg.exe"
+    local_ffprobe = APP_DIR / FFMPEG_DIR_NAME / "bin" / "ffprobe.exe"
+
     if local_ffmpeg.exists() and local_ffprobe.exists():
-        # Add to PATH for this session
         os.environ["PATH"] += os.pathsep + str(local_ffmpeg.parent)
         return True
-        
+
     return False
+
 
 def download_ffmpeg():
     """Download and extract FFmpeg."""
     try:
         logger.info("Downloading FFmpeg...")
-        
-        # Create temp file for zip
-        zip_path = Path("ffmpeg_temp.zip")
-        
-        # Download with progress bar
+
+        zip_path = APP_DIR / "ffmpeg_temp.zip"
+
         response = requests.get(FFMPEG_URL, stream=True)
+        response.raise_for_status()
         total_size = int(response.headers.get('content-length', 0))
-        
-        with open(zip_path, "wb") as file, tqdm(
-            desc="Downloading FFmpeg",
-            total=total_size,
-            unit='iB',
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as bar:
+        downloaded = 0
+        last_logged_pct = -1
+
+        with open(zip_path, "wb") as file:
             for data in response.iter_content(chunk_size=1024):
                 size = file.write(data)
-                bar.update(size)
-                
+                downloaded += size
+                if total_size > 0:
+                    pct = int(downloaded / total_size * 100)
+                    if pct % 10 == 0 and pct != last_logged_pct:
+                        logger.info(f"FFmpeg download: {pct}%")
+                        last_logged_pct = pct
+
         logger.info("Extracting FFmpeg...")
-        
-        # Extract
+
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # Get the root folder name in the zip (usually ffmpeg-version-essentials_build)
-            root_folder = zip_ref.namelist()[0].split('/')[0]
-            zip_ref.extractall(".")
-            
-        # Rename to standard 'ffmpeg' folder
-        extracted_path = Path(root_folder)
-        target_path = Path(FFMPEG_DIR_NAME)
-        
+            names = zip_ref.namelist()
+            if not names:
+                raise RuntimeError("Downloaded zip is empty")
+            root_folder = names[0].split('/')[0]
+            zip_ref.extractall(str(APP_DIR))
+
+        extracted_path = APP_DIR / root_folder
+        target_path = APP_DIR / FFMPEG_DIR_NAME
+
         if target_path.exists():
             shutil.rmtree(target_path)
-            
+
         extracted_path.rename(target_path)
-        
-        # Cleanup
+
         zip_path.unlink()
-        
+
         logger.info("FFmpeg setup complete.")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to download/install FFmpeg: {e}")
-        show_message_box("Error", f"Failed to download FFmpeg:\n{e}", 0x10) # 0x10 = Critical Icon
+        show_message_box("Error", f"Failed to download FFmpeg:\n{e}", MB_ICONERROR)
         return False
+
 
 def setup_environment():
     """Ensure environment is ready for the main application."""
-    # 1. Check FFmpeg
     if not check_ffmpeg():
-        # Ask user to download
         response = show_message_box(
             "Missing Dependency",
-            "FFmpeg is required for this application but was not found.\n\nWould you like to download and install it automatically?",
-            4 | 0x40 # Yes/No | Info Icon
+            "FFmpeg is required for this application but was not found.\n\n"
+            "Would you like to download and install it automatically?",
+            MB_YESNO | MB_ICONINFORMATION
         )
-        
-        if response == 6: # Yes
+
+        if response == IDYES:
             if not download_ffmpeg():
                 return False
-            # Add to PATH after download
-            local_bin = Path(os.getcwd()) / FFMPEG_DIR_NAME / "bin"
+            local_bin = APP_DIR / FFMPEG_DIR_NAME / "bin"
             os.environ["PATH"] += os.pathsep + str(local_bin)
         else:
             show_message_box(
-                "Warning", 
+                "Warning",
                 "The application may not function correctly without FFmpeg.",
-                0x30 # Warning Icon
+                MB_ICONWARNING
             )
-            
+
     return True
+
 
 def main():
     """Launcher entry point."""
     try:
-        # Ensure src is in path
-        current_dir = Path(__file__).parent
-        project_root = current_dir.parent
-        
-        if str(current_dir) not in sys.path:
-            sys.path.insert(0, str(current_dir))
-        if str(project_root) not in sys.path:
-            sys.path.insert(0, str(project_root))
-            
-        # Setup Environment
+        # Determine the src directory for imports
+        if getattr(sys, "frozen", False):
+            # Frozen: src/ lives inside _MEIPASS
+            src_dir = Path(sys._MEIPASS) / "src"
+            bundle_root = Path(sys._MEIPASS)
+        else:
+            # Dev: launcher.py is inside src/
+            src_dir = Path(__file__).resolve().parent
+            bundle_root = src_dir.parent
+
+        # Add to sys.path for imports
+        for p in (str(src_dir), str(bundle_root)):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+
+        # Setup Environment (FFmpeg check)
         if not setup_environment():
             logger.error("Environment setup failed.")
             sys.exit(1)
-            
+
         # Launch Main App
         logger.info("Launching main application...")
-        
-        # Import here to avoid loading heavy libs before checks
-        try:
-            # Try importing as a module first
-            from main import main as app_main
-        except ImportError:
-            # Fallback for when running from src directly
-            from src.main import main as app_main
-            
+
+        from main import main as app_main
         app_main()
-        
+
     except Exception as e:
         logger.critical(f"Launcher crashed: {e}", exc_info=True)
-        show_message_box("Launcher Error", f"An unexpected error occurred:\n{e}", 0x10)
+        show_message_box("Launcher Error", f"An unexpected error occurred:\n{e}", MB_ICONERROR)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

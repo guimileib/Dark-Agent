@@ -10,7 +10,7 @@ from pathlib import Path
 from PyQt6.QtCore import (
     Qt, QDate, QThread, QTimer, pyqtSignal, QSize,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QWheelEvent
+from PyQt6.QtGui import QColor, QFont, QWheelEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCalendarWidget, QComboBox,
     QFileDialog, QFrame, QGroupBox, QHBoxLayout, QInputDialog,
@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget, QSpinBox, QTimeEdit,
     QDateEdit, QSplitter, QToolButton, QCheckBox,
 )
-from PyQt6.QtCore import QTime, QDate
+from PyQt6.QtCore import QTime
 
 from core.uploader import (
     TikTokUploader,
@@ -29,6 +29,9 @@ from core.uploader import (
 )
 
 logger = logging.getLogger(__name__)
+
+# TikTok caption character limit (may vary by region)
+TIKTOK_CAPTION_LIMIT = 4000
 
 
 # ---------------------------------------------------------------------------
@@ -48,8 +51,8 @@ class AIGeneratorThread(QThread):
         import urllib.error
         import json
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={self.api_key}"
-        
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
         prompt = f"""
 Você é um especialista em redes sociais (TikTok, Reels, Shorts).
 O usuário quer uma descrição e hashtags virais para um vídeo.
@@ -66,11 +69,14 @@ Responda SOMENTE em JSON no seguinte formato (sem bloco markdown):
         data = {
             "contents": [{"parts": [{"text": prompt}]}]
         }
-        
+
         req = urllib.request.Request(
-            url, 
+            url,
             data=json.dumps(data).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
         )
         
         try:
@@ -102,12 +108,14 @@ Responda SOMENTE em JSON no seguinte formato (sem bloco markdown):
                     msg = f"HTTP {e.code}: {err_json['error']['message']}"
                 else:
                     msg = f"HTTP {e.code}: {error_body}"
-            except:
+            except Exception:
                 msg = str(e)
             
             # Se for 403 e a chave estiver incorreta ou sem permissões
             if e.code == 403:
-                msg += "\n\nDica: Mude sua chave de API nas configurações ou verifique se você possui os acessos necessários na conta do Google. Caso a chave esteja errada, apague-a no config.json gerado na pasta src/config para que o programa peça novamente."
+                from config.paths import get_user_config_file
+                config_path = get_user_config_file()
+                msg += f"\n\nDica: Mude sua chave de API nas configurações ou verifique se você possui os acessos necessários na conta do Google. Caso a chave esteja errada, apague-a no {config_path} para que o programa peça novamente."
                 
             self.finished.emit(False, msg, [])
         except Exception as e:
@@ -915,7 +923,7 @@ class UploadWidget(QWidget):
         self.btn_change_api_key.clicked.connect(self._change_api_key)
         lbl_desc_row.addWidget(self.btn_change_api_key)
 
-        self._char_counter = QLabel("0 / 4000")
+        self._char_counter = QLabel(f"0 / {TIKTOK_CAPTION_LIMIT}")
         self._char_counter.setStyleSheet(self._label_style(10, bold=False, color=self._TEXT_SEC))
         lbl_desc_row.addWidget(self._char_counter)
         meta_layout.addLayout(lbl_desc_row)
@@ -1143,11 +1151,7 @@ class UploadWidget(QWidget):
             self._video_metadata[self._current_video]["caption"] = self.txt_caption.toPlainText()
 
     def _change_api_key(self):
-        try:
-            from config.settings import settings
-        except Exception:
-            return
-            
+        from config.settings import settings
         current_key = getattr(settings, 'gemini_api_key', '')
         api_key, ok = QInputDialog.getText(
             self, "Alterar API Key do Gemini",
@@ -1165,12 +1169,8 @@ class UploadWidget(QWidget):
             QMessageBox.warning(self, "Aviso", "Selecione um vídeo na lista primeiro.")
             return
 
-        try:
-            from config.settings import settings
-        except Exception:
-            QMessageBox.warning(self, "Erro", "Erro ao carregar as configurações do sistema.")
-            return
-            
+        from config.settings import settings
+
         if not hasattr(settings, 'gemini_api_key') or not settings.gemini_api_key:
             api_key, ok = QInputDialog.getText(
                 self, "API Key do Gemini",
@@ -1221,8 +1221,8 @@ class UploadWidget(QWidget):
 
     def _on_caption_changed(self):
         n = len(self.txt_caption.toPlainText())
-        self._char_counter.setText(f"{n} / 4000")
-        if n > 4000:
+        self._char_counter.setText(f"{n} / {TIKTOK_CAPTION_LIMIT}")
+        if n > TIKTOK_CAPTION_LIMIT:
             self._char_counter.setStyleSheet(f"color: #EF4444; font-size: 10px; font-weight: 400; background: transparent;")
         else:
             self._char_counter.setStyleSheet(self._label_style(10, bold=False, color=self._TEXT_SEC))
@@ -1232,6 +1232,12 @@ class UploadWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_accounts(self):
+        # Disconnect before clearing to avoid stale signal accumulation
+        try:
+            self.account_list.currentItemChanged.disconnect(self._on_account_selected)
+        except TypeError:
+            pass  # Not connected yet (first call)
+
         self.account_list.clear()
         accounts = list_accounts()
         for acc in accounts:
@@ -1243,8 +1249,9 @@ class UploadWidget(QWidget):
             self.account_list.setCurrentRow(0)
             self.lbl_account_status.setText(f"Conta ativa: {accounts[0]['name']}")
         else:
-            self.lbl_account_status.setText("Nenhuma conta conectada. Clique em '➕ Adicionar Conta'.")
+            self.lbl_account_status.setText("Nenhuma conta conectada. Clique em '+ Adicionar Conta'.")
 
+        # Reconnect once (cleanly)
         self.account_list.currentItemChanged.connect(self._on_account_selected)
 
     def _on_account_selected(self, current, _previous):
@@ -1396,8 +1403,9 @@ class UploadWidget(QWidget):
             if scheduled:
                 # Add interval for each subsequent video
                 dt = base_dt + timedelta(minutes=interval_min * i)
-                task["schedule_time"] = dt
-                task["_raw_dt"] = dt # to populate local queue tracking
+                # tiktok_uploader expects 'YYYY-MM-DD HH:MM:SS' string format
+                task["schedule_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+                task["_raw_dt"] = dt  # to populate local queue tracking
             else:
                 task["schedule_time"] = None
                 

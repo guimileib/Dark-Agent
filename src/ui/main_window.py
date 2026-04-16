@@ -8,20 +8,13 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon
 
-try:
-    from config.settings import settings
-    from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget
-    from core import (
-        VideoDownloader, VideoValidator, Transcriber,
-        SubtitleGenerator, VideoEditor, PreviewRenderer
-    )
-except ImportError:
-    from ..config.settings import settings
-    from .widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget
-    from ..core import (
-        VideoDownloader, VideoValidator, Transcriber,
-        SubtitleGenerator, VideoEditor, PreviewRenderer
-    )
+from config.settings import settings
+from config.paths import APP_DIR
+from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget
+from core import (
+    VideoDownloader, VideoValidator, Transcriber,
+    SubtitleGenerator, VideoEditor, PreviewRenderer
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,45 +27,43 @@ class UpdateCheckerThread(QThread):
     def run(self):
         try:
             import subprocess
-            from pathlib import Path
             import sys
-            
-            # /src/ui/main_window.py -> /src/ui -> /src -> /
-            base_dir = Path(__file__).parent.parent.parent
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            
+
+            base_dir = APP_DIR
+            _sp_kw = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+
             # Pegar branch atual
             out_branch = subprocess.run(
-                ["git", "branch", "--show-current"], 
-                cwd=base_dir, capture_output=True, text=True, check=True, creationflags=flags
+                ["git", "branch", "--show-current"],
+                cwd=base_dir, capture_output=True, text=True, check=True, **_sp_kw
             )
             current_branch = out_branch.stdout.strip()
             if not current_branch:
                 current_branch = "main"
-                
+
             # Pegar hash local
             out_local = subprocess.run(
-                ["git", "rev-parse", "HEAD"], 
-                cwd=base_dir, capture_output=True, text=True, check=True, creationflags=flags
+                ["git", "rev-parse", "HEAD"],
+                cwd=base_dir, capture_output=True, text=True, check=True, **_sp_kw
             )
             hash_local = out_local.stdout.strip()
-            
+
             # Pegar hash remoto da branch atual
             out_remote = subprocess.run(
-                ["git", "ls-remote", "origin", current_branch], 
-                cwd=base_dir, capture_output=True, text=True, check=True, creationflags=flags
+                ["git", "ls-remote", "origin", current_branch],
+                cwd=base_dir, capture_output=True, text=True, check=True, **_sp_kw
             )
-            
+
             if not out_remote.stdout:
                 return
-                
+
             hash_remoto = out_remote.stdout.split()[0].strip()
-            
+
             if hash_remoto and hash_local != hash_remoto:
                 # Verificar se já temos esse commit localmente (estamos apenas 'ahead' e não 'behind')
                 check_local = subprocess.run(
                     ["git", "cat-file", "-e", hash_remoto],
-                    cwd=base_dir, capture_output=True, creationflags=flags
+                    cwd=base_dir, capture_output=True, **_sp_kw
                 )
                 
                 # returncode != 0 significa que não temos esse commit no repo local -> é uma atualização real
@@ -158,18 +149,18 @@ class ProcessadorThread(QThread):
                 video_progress_start = int((i / total_videos) * 100)
                 video_progress_chunk = 100 / total_videos
                 
-                def report_progress(msg, step_percent):
+                def report_progress(msg, step_percent, _start=video_progress_start, _chunk=video_progress_chunk, _idx=i):
                     """
                     step_percent: 0-100 relative to this video
                     global_percent: 0-100 absolute
                     """
-                    current_chunk_progress = (step_percent / 100) * video_progress_chunk
-                    global_percent = int(video_progress_start + current_chunk_progress)
+                    current_chunk_progress = (step_percent / 100) * _chunk
+                    global_percent = int(_start + current_chunk_progress)
                     # Clamp to 100
                     global_percent = min(99, global_percent)
-                    
+
                     # Log formatted message
-                    formatted_msg = f"[{i+1}/{total_videos}] {msg}"
+                    formatted_msg = f"[{_idx+1}/{total_videos}] {msg}"
                     self.progresso.emit(formatted_msg, global_percent)
 
                 logger.info(f"Processando: {url}")
@@ -362,18 +353,17 @@ class MainWindow(QMainWindow):
         """Usa git pull para atualizar o repositório"""
         try:
             import subprocess
-            from pathlib import Path
             import sys
-            
-            base_dir = Path(__file__).parent.parent.parent
+
+            base_dir = APP_DIR
             self.status_label.setText("Baixando atualização do repositório...")
             self.repaint() # Força a interface a atualizar o label
-            
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            
+
+            _sp_kw = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+
             proc = subprocess.run(
-                ["git", "pull"], 
-                cwd=base_dir, capture_output=True, text=True, creationflags=flags
+                ["git", "pull"],
+                cwd=base_dir, capture_output=True, text=True, **_sp_kw
             )
             
             if proc.returncode == 0:
@@ -434,7 +424,8 @@ class MainWindow(QMainWindow):
         msg_box.exec()
     
     def init_ui(self):
-        self.setWindowTitle("DarkAgent Pro v2.0")
+        from src import __version__
+        self.setWindowTitle(f"DarkAgent Pro v{__version__}")
 
         # Set Icon
         icon_path = settings.assets_dir / "icon.png"
@@ -452,7 +443,7 @@ class MainWindow(QMainWindow):
         header_layout = QVBoxLayout(header_container)
         header_layout.setContentsMargins(0, 10, 0, 20)
         
-        titulo = QLabel("DarkAgent Pro v2.0")
+        titulo = QLabel(f"DarkAgent Pro v{__version__}")
         titulo.setObjectName("HeaderTitle") # For QSS styling
         titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(titulo)
@@ -497,10 +488,11 @@ class MainWindow(QMainWindow):
         # Aba Upload
         self.upload_widget = UploadWidget()
         self.tab_widget.addTab(self.upload_widget, "Upload")
-        
-        # Gerar previews automaticamente ao iniciar
-        self.gerar_previews_iniciais()
-        
+
+        # NOTE: previews are generated asynchronously by iniciar_geracao_previews()
+        # in __init__. Do NOT call gerar_previews_iniciais() here (it was synchronous
+        # and duplicated the work, blocking the UI on startup).
+
         layout.addWidget(self.tab_widget)
         
         # Botão processar
@@ -532,24 +524,12 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
 
         # Centralizar na tela
-        from PyQt6.QtGui import QScreen
-        screen = self.screen() or QScreen()
-        screen_geometry = screen.availableGeometry()
-        x = (screen_geometry.width() - 1280) // 2 + screen_geometry.x()
-        y = (screen_geometry.height() - 800) // 2 + screen_geometry.y()
-        self.move(x, y)
-    
-    def gerar_previews_iniciais(self):
-        """Gera previews dos estilos ao iniciar o aplicativo"""
-        logger.info("Gerando previews iniciais dos estilos...")
-        
-        estilos = settings.get_todos_estilos()
-        for estilo in estilos:
-            try:
-                self.preview_renderer.gerar_previews_todos_tamanhos(estilo)
-                logger.info(f"Previews gerados para estilo: {estilo.id}")
-            except Exception as e:
-                logger.error(f"Erro ao gerar preview para {estilo.id}: {e}")
+        screen = self.screen()
+        if screen:
+            screen_geometry = screen.availableGeometry()
+            x = (screen_geometry.width() - 1280) // 2 + screen_geometry.x()
+            y = (screen_geometry.height() - 800) // 2 + screen_geometry.y()
+            self.move(x, y)
     
     def aplicar_tema(self):
         """Aplica tema escuro moderno"""
@@ -594,8 +574,19 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'subtitle_widget'):
             self.subtitle_widget.update_video_list(items)
 
+    def _is_thread_running(self) -> bool:
+        """Check if any processing thread is currently running."""
+        return (self.thread_processamento is not None
+                and self.thread_processamento.isRunning())
+
     def processar_video(self):
         """Inicia processamento do vídeo (Batch Auto)"""
+        if self._is_thread_running():
+            self.show_centered_message(
+                "Aguarde", "Já existe um processamento em andamento!",
+                QMessageBox.Icon.Warning)
+            return
+
         # Obter vídeos selecionados na aba de Legendas
         items_para_processar = self.subtitle_widget.get_selected_videos()
             
@@ -715,6 +706,12 @@ class MainWindow(QMainWindow):
     
     def iniciar_fluxo_completo(self, urls, qualidade, pasta):
         """Inicia o fluxo completo: download + legenda para URLs da aba Download."""
+        if self._is_thread_running():
+            self.show_centered_message(
+                "Aguarde", "Já existe um processamento em andamento!",
+                QMessageBox.Icon.Warning)
+            return
+
         if not urls:
             self.show_centered_message(
                 "Aviso",
@@ -780,6 +777,12 @@ class MainWindow(QMainWindow):
 
     def baixar_video_apenas(self, urls, qualidade, pasta):
         """Inicia download apenas do vídeo (Batch)"""
+        if self._is_thread_running():
+            self.show_centered_message(
+                "Aguarde", "Já existe um processamento em andamento!",
+                QMessageBox.Icon.Warning)
+            return
+
         if not urls:
             self.show_centered_message("Aviso", "Por favor, insira pelo menos uma URL válida!", QMessageBox.Icon.Warning)
             return
@@ -890,17 +893,18 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'preview_renderer'):
                 logger.info("Limpando cache de previews ao fechar...")
                 self.preview_renderer.limpar_cache()
-            
-            # Parar threads se estiverem rodando
-            if self.thread_preview and self.thread_preview.isRunning():
-                self.thread_preview.terminate()
-                self.thread_preview.wait()
-                
-            if self.thread_processamento and self.thread_processamento.isRunning():
-                # Opcional: confirmar saída se estiver processando
-                pass
-                
+
+            # Request interruption and wait (quit() has no effect on run()-based threads)
+            for name, thread in [("preview", self.thread_preview), ("processamento", self.thread_processamento)]:
+                if thread and thread.isRunning():
+                    logger.info(f"Aguardando thread de {name} finalizar...")
+                    thread.requestInterruption()
+                    if not thread.wait(5000):
+                        logger.warning(f"Thread de {name} não finalizou a tempo, forçando...")
+                        thread.terminate()
+                        thread.wait(1000)
+
         except Exception as e:
             logger.error(f"Erro ao fechar aplicação: {e}")
-        
+
         event.accept()
