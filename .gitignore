@@ -92,5 +92,17 @@ docs/
 # Arquivos de cookies
 src/cookies/
 
-# Configuração API KEY
+# Configuração do usuário (contém API keys)
 src/config/config.json
+config/config.json
+config/estilos_padrao.json
+
+# Cookies e contas (dados de sessão)
+cookies.txt
+accounts/
+
+# Logs
+logs/
+
+# Arquivo nul (Windows artifact)
+nul

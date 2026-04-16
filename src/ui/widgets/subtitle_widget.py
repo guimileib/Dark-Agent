@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QThread, QSize
-from PyQt6.QtGui import QPixmap, QColor, QIcon
+from PyQt6.QtGui import QPixmap, QColor, QIcon, QPainter, QFont, QPen, QBrush, QLinearGradient
 from pathlib import Path
 import logging
 
@@ -333,53 +333,44 @@ class SubtitleWidget(QWidget):
         
         # Criar botões para cada estilo em grid
         self.botoes_estilos = {}
-        # Ícones melhorados (fallback visual caso n tenha render)
-        self.icons_padrao = {
-            "tiktok_classic": "📝",
-            "tiktok_bold": "💬",
-            "reels_bold": "📸",
-            "youtube_shorts": "▶️",
-            "clean_minimal": "⚪",
-            "neon_glow": "✨",
-            "bold_impact": "💥",
-            "gradient_wave": "🌊"
-        }
-        
+
         row, col = 0, 0
         for estilo in self.estilos:
-            icon_emoji = self.icons_padrao.get(estilo.id, "📝")
             nome_simples = estilo.nome.replace("TikTok ", "").replace("Instagram ", "").replace("YouTube ", "")
-            
+
             btn = QToolButton()
-            btn.setText(f"{icon_emoji}\n{nome_simples}")
+            btn.setText(nome_simples)
             btn.setCheckable(True)
-            btn.setFixedSize(110, 75)
+            btn.setFixedSize(130, 82)
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            btn.setIconSize(QSize(90, 38))
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setProperty("nome_simples", nome_simples)
-            btn.setProperty("emoji_padrao", icon_emoji)
             btn.setStyleSheet("""
                 QToolButton {
-                    background-color: rgba(30, 41, 59, 0.7);
-                    color: white;
-                    border: 2px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 12px;
-                    font-weight: bold;
+                    background-color: rgba(15, 23, 42, 0.6);
+                    color: #cbd5e1;
+                    border: 1.5px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 14px;
+                    font-weight: 700;
                     font-size: 11px;
+                    padding-bottom: 4px;
                 }
                 QToolButton:hover {
-                    background-color: rgba(59, 130, 246, 0.2);
-                    border: 2px solid #3b82f6;
+                    background-color: rgba(59, 130, 246, 0.12);
+                    border: 1.5px solid rgba(59, 130, 246, 0.4);
+                    color: #f0f4ff;
                 }
                 QToolButton:checked {
-                    background-color: #3b82f6;
-                    border: 2px solid #60a5fa;
+                    background-color: rgba(59, 130, 246, 0.18);
+                    border: 2px solid #3b82f6;
+                    color: #ffffff;
                 }
             """)
-            btn.setIconSize(QSize(70, 40))
             btn.clicked.connect(lambda checked, e=estilo: self.selecionar_estilo(e))
             grid_layout.addWidget(btn, row, col)
             self.botoes_estilos[estilo.id] = btn
-            
+
             col += 1
             if col >= 2:
                 col = 0
@@ -633,53 +624,117 @@ class SubtitleWidget(QWidget):
         logger.info(f"Previews carregados: {sum(len(v) for v in self.previews_cache.values())} arquivos")
         self.atualizar_icones_botoes()
         
+    @staticmethod
+    def _criar_icone_estilo(cor_hex: str, cor_borda_hex: str = "#000000",
+                            tem_borda: bool = True) -> QIcon:
+        """Generates a styled 'Aa' preview icon using QPainter."""
+        w, h = 90, 38
+        pixmap = QPixmap(w, h)
+        pixmap.fill(QColor(0, 0, 0, 0))
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        cor = QColor(cor_hex)
+
+        # ── Background pill with subtle gradient ──
+        grad = QLinearGradient(0, 0, w, 0)
+        bg = QColor(cor)
+        bg.setAlpha(25)
+        bg2 = QColor(cor)
+        bg2.setAlpha(12)
+        grad.setColorAt(0.0, bg)
+        grad.setColorAt(1.0, bg2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(grad))
+        painter.drawRoundedRect(0, 0, w, h, 10, 10)
+
+        # ── Colored accent bar on left ──
+        accent = QColor(cor)
+        accent.setAlpha(200)
+        painter.setBrush(QBrush(accent))
+        painter.drawRoundedRect(0, 6, 4, h - 12, 2, 2)
+
+        # ── "Aa" text with optional border/shadow ──
+        font = QFont("Segoe UI", 17, QFont.Weight.ExtraBold)
+        painter.setFont(font)
+
+        if tem_borda:
+            # Text outline (simulated by drawing behind in border color)
+            outline = QColor(cor_borda_hex)
+            outline.setAlpha(180)
+            painter.setPen(QPen(outline))
+            for dx, dy in [(-1, -1), (-1, 1), (1, -1), (1, 1), (0, -1), (0, 1)]:
+                painter.drawText(pixmap.rect().adjusted(12 + dx, dy, dx, dy),
+                                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                                 "Aa")
+
+        # Main text
+        painter.setPen(QPen(cor))
+        painter.drawText(pixmap.rect().adjusted(12, 0, 0, 0),
+                         Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                         "Aa")
+
+        painter.end()
+        return QIcon(pixmap)
+
+    def _cor_ass_para_hex(self, cor_ass: str) -> str:
+        """Converte cor ASS (&HBBGGRR) para hex (#RRGGBB)."""
+        if len(cor_ass) >= 8:
+            b, g, r = cor_ass[2:4], cor_ass[4:6], cor_ass[6:8]
+            return f"#{r}{g}{b}"
+        return "#FFFFFF"
+
     def atualizar_icones_botoes(self):
-        """Atualiza os ícones dos botões exibindo-os com as cores do estilo."""
+        """Atualiza os ícones dos botões com previews Aa nas cores do estilo."""
         for estilo_id, btn in self.botoes_estilos.items():
             nome = btn.property("nome_simples")
-            emoji = btn.property("emoji_padrao")
-            
-            # Limpar icone qpixmap se houver
-            if not btn.icon().isNull():
-                btn.setIcon(QIcon())
-            
-            estilo = next((e for e in self.estilos if e.id == estilo_id), None)
-            
-            cor_hex = "#FFFFFF"
-            cor_borda = "rgba(255, 255, 255, 0.1)"
-            
-            if estilo:
-                if len(estilo.cor_primaria) >= 8:
-                    b, g, r = estilo.cor_primaria[2:4], estilo.cor_primaria[4:6], estilo.cor_primaria[6:8]
-                    cor_hex = f"#{r}{g}{b}"
-                
-                # Neon glow usa secundária para destaque (verde neon etc)
-                if estilo_id == "neon_glow" and len(estilo.cor_secundaria) >= 8:
-                    b, g, r = estilo.cor_secundaria[2:4], estilo.cor_secundaria[4:6], estilo.cor_secundaria[6:8]
-                    cor_hex = f"#{r}{g}{b}"
 
-                cor_borda = cor_hex
+            estilo = next((e for e in self.estilos if e.id == estilo_id), None)
+
+            cor_hex = "#FFFFFF"
+            cor_borda_hex = "#000000"
+            tem_borda = False
+
+            if estilo:
+                cor_hex = self._cor_ass_para_hex(estilo.cor_primaria)
+
+                # Neon glow usa secundária para destaque
+                if estilo_id == "neon_glow" and len(estilo.cor_secundaria) >= 8:
+                    cor_hex = self._cor_ass_para_hex(estilo.cor_secundaria)
+
+                if hasattr(estilo, "cor_borda"):
+                    cor_borda_hex = self._cor_ass_para_hex(estilo.cor_borda)
+                tem_borda = getattr(estilo, "borda_espessura", 0) > 0 or estilo_id == "neon_glow"
+
+            cor_borda_css = cor_hex
+
+            # Generate and set the icon
+            icon = self._criar_icone_estilo(cor_hex, cor_borda_hex, tem_borda)
+            btn.setIcon(icon)
 
             btn.setStyleSheet(f"""
                 QToolButton {{
-                    background-color: rgba(30, 41, 59, 0.7);
+                    background-color: rgba(15, 23, 42, 0.6);
                     color: {cor_hex};
-                    border: 2px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 12px;
-                    font-weight: bold;
-                    font-size: 13px;
+                    border: 1.5px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 14px;
+                    font-weight: 700;
+                    font-size: 11px;
+                    padding-bottom: 4px;
                 }}
                 QToolButton:hover {{
-                    background-color: rgba(59, 130, 246, 0.2);
-                    border: 2px solid {cor_borda};
+                    background-color: rgba(59, 130, 246, 0.12);
+                    border: 1.5px solid {cor_borda_css};
+                    color: #f0f4ff;
                 }}
                 QToolButton:checked {{
-                    background-color: rgba(255, 255, 255, 0.1);
-                    border: 2px solid {cor_borda};
-                    border-bottom: 4px solid {cor_borda};
+                    background-color: rgba(255, 255, 255, 0.08);
+                    border: 2px solid {cor_borda_css};
+                    color: #ffffff;
                 }}
             """)
-            btn.setText(f"{emoji}\n{nome}")
+            btn.setText(nome)
 
     def selecionar_estilo(self, estilo):
         self.estilo_atual = estilo

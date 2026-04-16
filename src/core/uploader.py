@@ -53,9 +53,9 @@ logger = logging.getLogger("DarkAgent.Uploader")
 
 def _cookies_dir() -> Path:
     """Return (and create) the directory where per-account cookies live."""
-    d = Path(__file__).parent.parent / "accounts"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    from config.paths import ACCOUNTS_DIR
+    ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
+    return ACCOUNTS_DIR
 
 
 def _cookies_path(account_name: str) -> Path:
@@ -141,6 +141,15 @@ window.navigator.permissions.query = (parameters) =>
     parameters.name === 'notifications'
         ? Promise.resolve({state: Notification.permission})
         : originalQuery(parameters);
+
+// 8. Auto-remove TikTok 'Joyride' tutorial overlays that intercept clicks
+setInterval(() => {
+    const blockers = document.querySelectorAll('.react-joyride__overlay, .react-joyride__spotlight, .react-joyride__tooltip');
+    blockers.forEach(el => {
+        el.style.display = 'none';
+        el.style.pointerEvents = 'none';
+    });
+}, 500);
 """
 
 
@@ -274,7 +283,6 @@ def _make_driver(browser_name: str, headless: bool = False):
         except Exception as e:
             error_str = str(e)
             if "Current browser version is" in error_str:
-                import re
                 m = re.search(r"Current browser version is (\d+)", error_str)
                 if m:
                     actual_version = int(m.group(1))
@@ -343,7 +351,8 @@ class TikTokUploader:
         else:
             # Legacy fallback
             self.account_name = "default"
-            self.cookies_path = str(Path(__file__).parent.parent / "cookies.txt")
+            from config.paths import COOKIES_FILE
+            self.cookies_path = str(COOKIES_FILE)
         self.logger = logging.getLogger("DarkAgent.Uploader")
 
     # ------------------------------------------------------------------

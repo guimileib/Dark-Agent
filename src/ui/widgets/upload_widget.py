@@ -10,7 +10,7 @@ from pathlib import Path
 from PyQt6.QtCore import (
     Qt, QDate, QThread, QTimer, pyqtSignal, QSize,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QWheelEvent
+from PyQt6.QtGui import QColor, QFont, QWheelEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCalendarWidget, QComboBox,
     QFileDialog, QFrame, QGroupBox, QHBoxLayout, QInputDialog,
@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget, QSpinBox, QTimeEdit,
     QDateEdit, QSplitter, QToolButton, QCheckBox,
 )
-from PyQt6.QtCore import QTime, QDate
+from PyQt6.QtCore import QTime
 
 from core.uploader import (
     TikTokUploader,
@@ -29,6 +29,9 @@ from core.uploader import (
 )
 
 logger = logging.getLogger(__name__)
+
+# TikTok caption character limit (may vary by region)
+TIKTOK_CAPTION_LIMIT = 4000
 
 
 # ---------------------------------------------------------------------------
@@ -48,8 +51,8 @@ class AIGeneratorThread(QThread):
         import urllib.error
         import json
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={self.api_key}"
-        
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
         prompt = f"""
 Você é um especialista em redes sociais (TikTok, Reels, Shorts).
 O usuário quer uma descrição e hashtags virais para um vídeo.
@@ -66,11 +69,14 @@ Responda SOMENTE em JSON no seguinte formato (sem bloco markdown):
         data = {
             "contents": [{"parts": [{"text": prompt}]}]
         }
-        
+
         req = urllib.request.Request(
-            url, 
+            url,
             data=json.dumps(data).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
         )
         
         try:
@@ -102,12 +108,14 @@ Responda SOMENTE em JSON no seguinte formato (sem bloco markdown):
                     msg = f"HTTP {e.code}: {err_json['error']['message']}"
                 else:
                     msg = f"HTTP {e.code}: {error_body}"
-            except:
+            except Exception:
                 msg = str(e)
             
             # Se for 403 e a chave estiver incorreta ou sem permissões
             if e.code == 403:
-                msg += "\n\nDica: Mude sua chave de API nas configurações ou verifique se você possui os acessos necessários na conta do Google. Caso a chave esteja errada, apague-a no config.json gerado na pasta src/config para que o programa peça novamente."
+                from config.paths import get_user_config_file
+                config_path = get_user_config_file()
+                msg += f"\n\nDica: Mude sua chave de API nas configurações ou verifique se você possui os acessos necessários na conta do Google. Caso a chave esteja errada, apague-a no {config_path} para que o programa peça novamente."
                 
             self.finished.emit(False, msg, [])
         except Exception as e:
@@ -203,8 +211,7 @@ class DrumRoll(QWidget):
 
 class InlineDateTimePicker(QWidget):
     """
-    Compact date + time picker — two QSpinBox-style rows mimicking TikTok Studio.
-    Shows: [🕐 HH:MM] [📅 DD/MM/YYYY]
+    Modern date + time picker with labeled cards and quick-pick times.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -216,99 +223,176 @@ class InlineDateTimePicker(QWidget):
         default = default.replace(second=0, microsecond=0)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 6, 0, 0)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(12)
 
-        # ── Row: time + date side by side (like TikTok) ──────────────
+        # ── Row: time + date cards side by side ──────────────────────
         row = QHBoxLayout()
-        row.setSpacing(12)
+        row.setSpacing(14)
 
-        # Time picker
+        # ── Time card ────────────────────────────────────────────────
         time_frame = QFrame()
-        time_frame.setStyleSheet(
-            "QFrame { background: #1e293b; border: 1px solid #334155; border-radius: 8px; }"
-        )
-        time_layout = QHBoxLayout(time_frame)
-        time_layout.setContentsMargins(10, 6, 10, 6)
-        time_layout.setSpacing(4)
+        time_frame.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(30, 41, 59, 0.9), stop:1 rgba(15, 23, 42, 0.9));
+                border: 1.5px solid rgba(59, 130, 246, 0.25);
+                border-radius: 14px;
+            }
+        """)
+        time_card = QVBoxLayout(time_frame)
+        time_card.setContentsMargins(16, 12, 16, 12)
+        time_card.setSpacing(6)
 
-        lbl_t = QLabel("🕐")
-        lbl_t.setStyleSheet("color: #94a3b8; background: transparent; border: none; font-size: 16px;")
-        time_layout.addWidget(lbl_t)
+        lbl_t = QLabel("HORA")
+        lbl_t.setStyleSheet(
+            "color: #60a5fa; font-size: 10px; font-weight: 800;"
+            " letter-spacing: 1.5px; background: transparent; border: none;"
+        )
+        time_card.addWidget(lbl_t)
 
         self._time_edit = QTimeEdit()
         self._time_edit.setTime(QTime(default.hour, default.minute))
         self._time_edit.setDisplayFormat("HH:mm")
-        self._time_edit.setStyleSheet(
-            "QTimeEdit { background: transparent; border: none; color: #e2e8f0;"
-            " font-size: 16px; font-weight: bold; }"
-            "QTimeEdit::up-button { width: 24px; border-radius: 4px; border: 1px solid #334155; background: #1e293b; margin-bottom: 1px; }"
-            "QTimeEdit::down-button { width: 24px; border-radius: 4px; border: 1px solid #334155; background: #1e293b; margin-top: 1px; }"
-            "QTimeEdit::up-button:hover, QTimeEdit::down-button:hover { background: #3b82f6; }"
-            "QTimeEdit::up-arrow { width: 12px; height: 12px; }"
-            "QTimeEdit::down-arrow { width: 12px; height: 12px; }"
-        )
-        time_layout.addWidget(self._time_edit)
+        self._time_edit.setStyleSheet("""
+            QTimeEdit {
+                background: transparent; border: none; color: #f0f4ff;
+                font-size: 28px; font-weight: 800; font-family: 'Segoe UI', sans-serif;
+            }
+            QTimeEdit::up-button {
+                width: 22px; border-radius: 5px;
+                border: 1px solid rgba(59, 130, 246, 0.2);
+                background: rgba(30, 41, 59, 0.6); margin-bottom: 1px;
+            }
+            QTimeEdit::down-button {
+                width: 22px; border-radius: 5px;
+                border: 1px solid rgba(59, 130, 246, 0.2);
+                background: rgba(30, 41, 59, 0.6); margin-top: 1px;
+            }
+            QTimeEdit::up-button:hover, QTimeEdit::down-button:hover {
+                background: rgba(59, 130, 246, 0.4);
+                border-color: #3b82f6;
+            }
+        """)
+        time_card.addWidget(self._time_edit)
         row.addWidget(time_frame)
 
-        # Date picker
+        # ── Date card ────────────────────────────────────────────────
         date_frame = QFrame()
-        date_frame.setStyleSheet(
-            "QFrame { background: #1e293b; border: 1px solid #334155; border-radius: 8px; }"
-        )
-        date_layout = QHBoxLayout(date_frame)
-        date_layout.setContentsMargins(10, 6, 10, 6)
-        date_layout.setSpacing(4)
+        date_frame.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(30, 41, 59, 0.9), stop:1 rgba(15, 23, 42, 0.9));
+                border: 1.5px solid rgba(139, 92, 246, 0.25);
+                border-radius: 14px;
+            }
+        """)
+        date_card = QVBoxLayout(date_frame)
+        date_card.setContentsMargins(16, 12, 16, 12)
+        date_card.setSpacing(6)
 
-        lbl_d = QLabel("📅")
-        lbl_d.setStyleSheet("color: #94a3b8; background: transparent; border: none; font-size: 16px;")
-        date_layout.addWidget(lbl_d)
+        lbl_d = QLabel("DATA")
+        lbl_d.setStyleSheet(
+            "color: #a78bfa; font-size: 10px; font-weight: 800;"
+            " letter-spacing: 1.5px; background: transparent; border: none;"
+        )
+        date_card.addWidget(lbl_d)
 
         self._date_edit = QDateEdit()
         self._date_edit.setDate(QDate(default.year, default.month, default.day))
         self._date_edit.setDisplayFormat("dd/MM/yyyy")
         self._date_edit.setMinimumDate(QDate.currentDate())
         self._date_edit.setCalendarPopup(True)
-        self._date_edit.setStyleSheet(
-            "QDateEdit { background: transparent; border: none; color: #e2e8f0;"
-            " font-size: 16px; font-weight: bold; }"
-            "QDateEdit::up-button { width: 16px; }"
-            "QDateEdit::down-button { width: 16px; }"
-            "QDateEdit::drop-down { subcontrol-origin: padding; subcontrol-position: right center;"
-            " width: 20px; border: none; }"
-        )
-        date_layout.addWidget(self._date_edit)
+        self._date_edit.setStyleSheet("""
+            QDateEdit {
+                background: transparent; border: none; color: #f0f4ff;
+                font-size: 22px; font-weight: 800; font-family: 'Segoe UI', sans-serif;
+            }
+            QDateEdit::up-button {
+                width: 20px; border-radius: 5px;
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                background: rgba(30, 41, 59, 0.6);
+            }
+            QDateEdit::down-button {
+                width: 20px; border-radius: 5px;
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                background: rgba(30, 41, 59, 0.6);
+            }
+            QDateEdit::up-button:hover, QDateEdit::down-button:hover {
+                background: rgba(139, 92, 246, 0.4);
+                border-color: #8b5cf6;
+            }
+            QDateEdit::drop-down {
+                subcontrol-origin: padding; subcontrol-position: right center;
+                width: 22px; border: none;
+            }
+        """)
+        date_card.addWidget(self._date_edit)
         row.addWidget(date_frame)
         row.addStretch()
 
         layout.addLayout(row)
 
-        # Favorite times row
+        # ── Favorite times row — pill buttons ────────────────────────
         fav_row = QHBoxLayout()
         fav_row.setSpacing(6)
-        lbl_fav = QLabel("Horários favoritos:")
-        lbl_fav.setStyleSheet("color: #64748b; font-size: 11px;")
+        lbl_fav = QLabel("Atalhos:")
+        lbl_fav.setStyleSheet(
+            "color: #475569; font-size: 11px; font-weight: 600;"
+            " background: transparent; border: none;"
+        )
         fav_row.addWidget(lbl_fav)
-        
+
+        _fav_btn_style = """
+            QPushButton {
+                background: rgba(30, 41, 59, 0.5);
+                color: #94a3b8;
+                border: 1px solid rgba(51, 65, 85, 0.5);
+                border-radius: 14px;
+                padding: 4px 12px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: rgba(59, 130, 246, 0.15);
+                color: #e2e8f0;
+                border-color: rgba(59, 130, 246, 0.4);
+            }
+            QPushButton:pressed {
+                background: rgba(59, 130, 246, 0.3);
+                color: #ffffff;
+            }
+        """
         for t in ["09:00", "12:00", "15:00", "18:00", "20:00"]:
             btn = QPushButton(t)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet(
-                "QPushButton { background: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 8px; padding: 2px 8px; font-size: 11px; }"
-                "QPushButton:hover { background: #334155; color: #e2e8f0; }"
-            )
+            btn.setStyleSheet(_fav_btn_style)
             btn.clicked.connect(lambda checked, time=t: self._set_favorite_time(time))
             fav_row.addWidget(btn)
         fav_row.addStretch()
         layout.addLayout(fav_row)
 
-        # Summary label
+        # ── Summary label ────────────────────────────────────────────
+        summary_frame = QFrame()
+        summary_frame.setStyleSheet("""
+            QFrame {
+                background: rgba(59, 130, 246, 0.08);
+                border: 1px solid rgba(59, 130, 246, 0.15);
+                border-radius: 10px;
+            }
+        """)
+        summary_inner = QHBoxLayout(summary_frame)
+        summary_inner.setContentsMargins(14, 8, 14, 8)
+
         self._lbl_summary = QLabel()
         self._lbl_summary.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self._lbl_summary.setStyleSheet(
-            "color: #60a5fa; font-size: 12px; font-weight: bold; background: transparent;"
+            "color: #93c5fd; font-size: 12px; font-weight: 700;"
+            " background: transparent; border: none;"
         )
-        layout.addWidget(self._lbl_summary)
+        summary_inner.addWidget(self._lbl_summary)
+        layout.addWidget(summary_frame)
+
         self._update_summary()
 
         self._time_edit.timeChanged.connect(lambda _: self._update_summary())
@@ -317,7 +401,7 @@ class InlineDateTimePicker(QWidget):
     def _update_summary(self):
         dt = self.selected_datetime()
         self._lbl_summary.setText(
-            f"📌  Agendado para: {dt.strftime('%A, %d/%m/%Y às %H:%M')}"
+            f"Agendado para: {dt.strftime('%A, %d/%m/%Y')}  \u2022  {dt.strftime('%H:%M')}"
         )
 
     def _set_favorite_time(self, time_str: str):
@@ -915,7 +999,7 @@ class UploadWidget(QWidget):
         self.btn_change_api_key.clicked.connect(self._change_api_key)
         lbl_desc_row.addWidget(self.btn_change_api_key)
 
-        self._char_counter = QLabel("0 / 4000")
+        self._char_counter = QLabel(f"0 / {TIKTOK_CAPTION_LIMIT}")
         self._char_counter.setStyleSheet(self._label_style(10, bold=False, color=self._TEXT_SEC))
         lbl_desc_row.addWidget(self._char_counter)
         meta_layout.addLayout(lbl_desc_row)
@@ -1143,11 +1227,7 @@ class UploadWidget(QWidget):
             self._video_metadata[self._current_video]["caption"] = self.txt_caption.toPlainText()
 
     def _change_api_key(self):
-        try:
-            from config.settings import settings
-        except Exception:
-            return
-            
+        from config.settings import settings
         current_key = getattr(settings, 'gemini_api_key', '')
         api_key, ok = QInputDialog.getText(
             self, "Alterar API Key do Gemini",
@@ -1165,12 +1245,8 @@ class UploadWidget(QWidget):
             QMessageBox.warning(self, "Aviso", "Selecione um vídeo na lista primeiro.")
             return
 
-        try:
-            from config.settings import settings
-        except Exception:
-            QMessageBox.warning(self, "Erro", "Erro ao carregar as configurações do sistema.")
-            return
-            
+        from config.settings import settings
+
         if not hasattr(settings, 'gemini_api_key') or not settings.gemini_api_key:
             api_key, ok = QInputDialog.getText(
                 self, "API Key do Gemini",
@@ -1221,8 +1297,8 @@ class UploadWidget(QWidget):
 
     def _on_caption_changed(self):
         n = len(self.txt_caption.toPlainText())
-        self._char_counter.setText(f"{n} / 4000")
-        if n > 4000:
+        self._char_counter.setText(f"{n} / {TIKTOK_CAPTION_LIMIT}")
+        if n > TIKTOK_CAPTION_LIMIT:
             self._char_counter.setStyleSheet(f"color: #EF4444; font-size: 10px; font-weight: 400; background: transparent;")
         else:
             self._char_counter.setStyleSheet(self._label_style(10, bold=False, color=self._TEXT_SEC))
@@ -1232,6 +1308,12 @@ class UploadWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_accounts(self):
+        # Disconnect before clearing to avoid stale signal accumulation
+        try:
+            self.account_list.currentItemChanged.disconnect(self._on_account_selected)
+        except TypeError:
+            pass  # Not connected yet (first call)
+
         self.account_list.clear()
         accounts = list_accounts()
         for acc in accounts:
@@ -1243,8 +1325,9 @@ class UploadWidget(QWidget):
             self.account_list.setCurrentRow(0)
             self.lbl_account_status.setText(f"Conta ativa: {accounts[0]['name']}")
         else:
-            self.lbl_account_status.setText("Nenhuma conta conectada. Clique em '➕ Adicionar Conta'.")
+            self.lbl_account_status.setText("Nenhuma conta conectada. Clique em '+ Adicionar Conta'.")
 
+        # Reconnect once (cleanly)
         self.account_list.currentItemChanged.connect(self._on_account_selected)
 
     def _on_account_selected(self, current, _previous):
@@ -1396,8 +1479,9 @@ class UploadWidget(QWidget):
             if scheduled:
                 # Add interval for each subsequent video
                 dt = base_dt + timedelta(minutes=interval_min * i)
-                task["schedule_time"] = dt
-                task["_raw_dt"] = dt # to populate local queue tracking
+                # tiktok_uploader expects 'YYYY-MM-DD HH:MM:SS' string format
+                task["schedule_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+                task["_raw_dt"] = dt  # to populate local queue tracking
             else:
                 task["schedule_time"] = None
                 

@@ -12,7 +12,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 a = Analysis(
     ['src\\launcher.py'],
-    pathex=[],
+    pathex=['src'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -24,6 +24,12 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
+
+# NOTE: Use .ico for Windows executable icon. Convert icon.png to icon.ico
+# with: magick convert src/assets/icon.png -define icon:auto-resize=256,128,64,48,32,16 src/assets/icon.ico
+# If icon.ico does not exist, PyInstaller will skip it gracefully.
+import os
+icon_file = 'src\\assets\\icon.ico' if os.path.exists('src\\assets\\icon.ico') else []
 
 exe = EXE(
     pyz,
@@ -44,5 +50,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['src\\assets\\icon.png'],
+    icon=icon_file,
 )

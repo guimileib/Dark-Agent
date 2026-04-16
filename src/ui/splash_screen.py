@@ -37,8 +37,10 @@ class SplashScreen(QWidget):
         self._bg = QWidget(self)
         self._bg.setStyleSheet("""
             QWidget {
-                background-color: #0F1729;
-                border-radius: 16px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #080c16, stop:0.5 #0f172a, stop:1 #0c1425);
+                border-radius: 20px;
+                border: 1px solid rgba(59, 130, 246, 0.15);
             }
         """)
         self._bg.setGeometry(0, 0, 600, 350)
@@ -55,15 +57,15 @@ class SplashScreen(QWidget):
         self.btn_minimize.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
-                color: #94a3b8;
+                color: #475569;
                 border: none;
                 font-size: 16px;
                 font-weight: bold;
+                border-radius: 15px;
             }
             QPushButton:hover {
-                color: white;
-                background-color: rgba(255, 255, 255, 0.1);
-                border-radius: 15px;
+                color: #e2e8f0;
+                background-color: rgba(59, 130, 246, 0.15);
             }
         """)
         top_bar.addWidget(self.btn_minimize)
@@ -73,19 +75,22 @@ class SplashScreen(QWidget):
         self.logo_label = QLabel("DarkAgent Pro")
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.logo_label.setStyleSheet("""
-            color: white;
-            font-size: 32px;
-            font-weight: bold;
+            color: #f8fafc;
+            font-size: 36px;
+            font-weight: 800;
             font-family: 'Segoe UI', sans-serif;
+            letter-spacing: -0.5px;
         """)
         self.layout_v.addWidget(self.logo_label)
 
         self.subtitle_label = QLabel("AI Video Studio")
         self.subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.subtitle_label.setStyleSheet("""
-            color: #94a3b8;
-            font-size: 16px;
+            color: #60a5fa;
+            font-size: 15px;
+            font-weight: 600;
             font-family: 'Segoe UI', sans-serif;
+            letter-spacing: 2px;
             margin-bottom: 20px;
         """)
         self.layout_v.addWidget(self.subtitle_label)
@@ -95,7 +100,7 @@ class SplashScreen(QWidget):
         # ── Status + Progress bar ────────────────────────────────────
         self.status_label = QLabel("Initializing...")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("color: #64748b; font-size: 12px;")
+        self.status_label.setStyleSheet("color: #64748b; font-size: 12px; font-weight: 500; letter-spacing: 0.3px;")
         self.layout_v.addWidget(self.status_label)
 
         self.progress = QProgressBar()
@@ -104,13 +109,13 @@ class SplashScreen(QWidget):
         self.progress.setFixedHeight(6)
         self.progress.setStyleSheet("""
             QProgressBar {
-                background-color: #1e293b;
+                background-color: rgba(30, 41, 59, 0.5);
                 border-radius: 3px;
                 border: none;
             }
             QProgressBar::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #3b82f6, stop:1 #60a5fa);
+                    stop:0 #3b82f6, stop:0.5 #6366f1, stop:1 #8b5cf6);
                 border-radius: 3px;
             }
         """)

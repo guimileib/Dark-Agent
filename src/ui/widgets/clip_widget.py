@@ -6,15 +6,12 @@ from PyQt6.QtWidgets import (
     QProgressBar, QListWidget, QListWidgetItem, QFrame,
     QComboBox, QFileDialog, QMessageBox, QCheckBox
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QThread, QPropertyAnimation, QEasingCurve, QSize
-from PyQt6.QtGui import QColor, QPalette, QIcon
+from PyQt6.QtCore import pyqtSignal, Qt, QThread, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QColor, QIcon
 from pathlib import Path
 import logging
 
-try:
-    from config.settings import settings
-except ImportError:
-    from ...config.settings import settings
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +58,44 @@ class ClipAnalyzerThread(QThread):
             self.concluido.emit([])
 
 
+class ClipBatchDownloadThread(QThread):
+    """Thread para baixar todos os clips sem bloquear a UI."""
+    progresso = pyqtSignal(int, int)  # current, total
+    status = pyqtSignal(str)
+    concluido = pyqtSignal(int, int)  # baixados, total
+
+    def __init__(self, video_path, clips, output_dir):
+        super().__init__()
+        self.video_path = video_path
+        self.clips = clips
+        self.output_dir = output_dir
+
+    def run(self):
+        from core.clip_analyzer import ClipAnalyzer
+        analyzer = ClipAnalyzer(self.video_path)
+        total = len(self.clips)
+        baixados = 0
+
+        for i, clip_data in enumerate(self.clips):
+            if self.isInterruptionRequested():
+                break
+            inicio = clip_data['inicio']
+            fim = clip_data['fim']
+            score = clip_data['score']
+            nome_video = Path(self.video_path).stem
+            output_path = self.output_dir / f"{nome_video}_clip_{i+1:02d}_score{int(score*100)}.mp4"
+
+            self.status.emit(f"Baixando clip {i+1}/{total}...")
+            if analyzer.extrair_clip(inicio, fim, str(output_path)):
+                baixados += 1
+                logger.info(f"Clip {i+1}/{total} baixado: {output_path}")
+            else:
+                logger.warning(f"Falha ao baixar clip {i+1}/{total}")
+            self.progresso.emit(i + 1, total)
+
+        self.concluido.emit(baixados, total)
+
+
 class ClipItemWidget(QFrame):
     """Widget individual para cada clip sugerido"""
     
@@ -76,14 +111,14 @@ class ClipItemWidget(QFrame):
         self.setObjectName("ClipItem")
         self.setStyleSheet("""
             QFrame#ClipItem {
-                background-color: rgba(30, 41, 59, 0.5);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                margin-bottom: 8px;
+                background-color: rgba(15, 23, 42, 0.5);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 16px;
+                margin-bottom: 6px;
             }
             QFrame#ClipItem:hover {
-                background-color: rgba(59, 130, 246, 0.1);
-                border: 1px solid #3b82f6;
+                background-color: rgba(59, 130, 246, 0.08);
+                border: 1px solid rgba(59, 130, 246, 0.3);
             }
         """)
         
@@ -143,29 +178,33 @@ class ClipItemWidget(QFrame):
         return f"{mins:02d}:{secs:02d}"
     
     def _get_score_color(self, score):
-        """Retorna cor baseada no score"""
+        """Retorna cor baseada no score — alinhado com a paleta moderna"""
         if score >= 0.8:
-            return "#00ff00"  # Verde forte
+            return "#22c55e"  # Success green
         elif score >= 0.6:
-            return "#ffcc00"  # Amarelo
+            return "#eab308"  # Warning yellow
         elif score >= 0.4:
-            return "#ff9900"  # Laranja
+            return "#f97316"  # Orange
         else:
-            return "#ff3300"  # Vermelho
+            return "#ef4444"  # Error red
     
     def _get_progressbar_style(self, score):
         """Retorna estilo da barra baseado no score"""
         color = self._get_score_color(score)
         return f"""
             QProgressBar {{
-                border: 2px solid #333;
+                border: none;
                 border-radius: 5px;
                 text-align: center;
-                background-color: #1a1a1a;
+                background-color: rgba(15, 23, 42, 0.6);
+                color: #e2e8f0;
+                font-weight: 600;
+                font-size: 11px;
+                max-height: 14px;
             }}
             QProgressBar::chunk {{
                 background-color: {color};
-                border-radius: 3px;
+                border-radius: 5px;
             }}
         """
 
@@ -359,23 +398,26 @@ class ClipWidget(QWidget):
         self.results_expanded = False
         self.original_top_height = 0
         
-        self.btn_expand = QPushButton("🔎 Ampliar")
+        self.btn_expand = QPushButton("Ampliar")
         self.btn_expand.setCheckable(True)
         self.btn_expand.setStyleSheet("""
             QPushButton {
-                background-color: rgba(59, 130, 246, 0.2);
-                border: 1px solid #3b82f6;
-                color: #3b82f6;
-                border-radius: 4px;
-                padding: 4px 10px;
-                font-weight: bold;
+                background-color: rgba(59, 130, 246, 0.12);
+                border: 1.5px solid rgba(59, 130, 246, 0.3);
+                color: #60a5fa;
+                border-radius: 10px;
+                padding: 6px 14px;
+                font-weight: 700;
+                font-size: 12px;
             }
             QPushButton:hover {
-                background-color: rgba(59, 130, 246, 0.3);
+                background-color: rgba(59, 130, 246, 0.2);
+                border-color: #3b82f6;
             }
             QPushButton:checked {
                 background-color: #3b82f6;
                 color: white;
+                border-color: #3b82f6;
             }
         """)
         self.btn_expand.clicked.connect(self.toggle_results_expansion)
@@ -419,13 +461,21 @@ class ClipWidget(QWidget):
     
     def toggle_results_expansion(self, checked):
         """Expande a seção de resultados oprimindo a seção superior"""
+        # Stop any running animation first to prevent signal leaks
+        if hasattr(self, 'anim') and self.anim is not None:
+            self.anim.stop()
+            try:
+                self.anim.finished.disconnect()
+            except TypeError:
+                pass
+
         self.results_expanded = checked
-        
+
         # Configurar animação
         self.anim = QPropertyAnimation(self.top_container, b"maximumHeight")
         self.anim.setDuration(400)
         self.anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
-        
+
         if self.results_expanded:
             # Expandir resultados = Colapsar topo
             self.original_top_height = self.top_container.height()
@@ -435,14 +485,13 @@ class ClipWidget(QWidget):
         else:
             # Restaurar topo
             self.anim.setStartValue(self.top_container.height())
-            # Restaurar para altura original ou sizeHint se 0
             target_h = self.original_top_height if self.original_top_height > 0 else self.top_container.sizeHint().height()
             self.anim.setEndValue(target_h)
             self.btn_expand.setText("🔎 Ampliar")
-            
+
             # Ao terminar de restaurar, resetar para permitir redimensionamento
-            self.anim.finished.connect(lambda: self.top_container.setMaximumHeight(16777215)) # QWIDGETSIZE_MAX
-            
+            self.anim.finished.connect(lambda: self.top_container.setMaximumHeight(16777215))
+
         self.anim.start()
 
     def on_check_todos_toggled(self, checked):
@@ -574,102 +623,62 @@ class ClipWidget(QWidget):
         self.btn_baixar_todos.setEnabled(False)
     
     def baixar_todos_clips(self):
-        """Baixa todos os clips sugeridos em lote"""
+        """Baixa todos os clips sugeridos em lote (threaded)"""
         if not self.clips_sugeridos:
-            QMessageBox.warning(
-                self,
-                "Sem clips",
-                "Nenhum clip disponível para download."
-            )
+            QMessageBox.warning(self, "Sem clips", "Nenhum clip disponível para download.")
             return
-        
-        # Confirmar download
+
         resposta = QMessageBox.question(
-            self,
-            "Confirmar Download",
+            self, "Confirmar Download",
             f"Deseja baixar todos os {len(self.clips_sugeridos)} clips?\n\n"
-            f"Vídeo: {self.video_path.name}\n"
-            f"Isso pode levar alguns minutos.",
+            f"Vídeo: {self.video_path.name}\nIsso pode levar alguns minutos.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
         if resposta != QMessageBox.StandardButton.Yes:
             return
-        
-        # Desabilitar botão durante processamento
+
         self.btn_baixar_todos.setEnabled(False)
         self.btn_analisar.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        
-        try:
-            from core.clip_analyzer import ClipAnalyzer
-            from pathlib import Path as PathLib
-            
-            # Criar pasta de saída
-            output_dir = settings.output_dir / "clips"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            
-            analyzer = ClipAnalyzer(self.video_path)
-            total_clips = len(self.clips_sugeridos)
-            clips_baixados = 0
-            
-            for i, clip_data in enumerate(self.clips_sugeridos):
-                inicio = clip_data['inicio']
-                fim = clip_data['fim']
-                score = clip_data['score']
-                
-                # Nome do arquivo com score
-                nome_video = self.video_path.stem
-                output_path = output_dir / f"{nome_video}_clip_{i+1:02d}_score{int(score*100)}.mp4"
-                
-                self.status_label.setText(f"⬇️ Baixando clip {i+1}/{total_clips}...")
-                
-                sucesso = analyzer.extrair_clip(inicio, fim, str(output_path))
-                
-                if sucesso:
-                    clips_baixados += 1
-                    logger.info(f"Clip {i+1}/{total_clips} baixado: {output_path}")
-                else:
-                    logger.warning(f"Falha ao baixar clip {i+1}/{total_clips}")
-                
-                # Atualizar progresso
-                self.progress_bar.setValue(int((i + 1) / total_clips * 100))
-            
-            # Finalizar
-            self.progress_bar.setVisible(False)
-            self.btn_baixar_todos.setEnabled(True)
-            self.btn_analisar.setEnabled(True)
-            
-            if clips_baixados == total_clips:
-                QMessageBox.information(
-                    self,
-                    "Sucesso! 🎉",
-                    f"Todos os {clips_baixados} clips foram baixados com sucesso!\n\n"
-                    f"Salvos em: {output_dir}"
-                )
-                self.status_label.setText(f"✅ {clips_baixados} clips baixados!")
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Download Parcial ⚠️",
-                    f"{clips_baixados} de {total_clips} clips foram baixados.\n\n"
-                    f"Verifique os logs para mais detalhes."
-                )
-                self.status_label.setText(f"⚠️ {clips_baixados}/{total_clips} clips baixados")
-            
-            logger.info(f"Download em lote concluído: {clips_baixados}/{total_clips}")
-            
-        except Exception as e:
-            logger.error(f"Erro ao baixar clips em lote: {e}")
-            QMessageBox.critical(
-                self,
-                "Erro ❌",
-                f"Erro ao baixar clips:\n{str(e)}"
+
+        output_dir = settings.output_dir / "clips"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        self._batch_thread = ClipBatchDownloadThread(
+            self.video_path, self.clips_sugeridos, output_dir
+        )
+        self._batch_thread.progresso.connect(
+            lambda cur, tot: self.progress_bar.setValue(int(cur / tot * 100))
+        )
+        self._batch_thread.status.connect(
+            lambda msg: self.status_label.setText(f"⬇️ {msg}")
+        )
+        self._batch_thread.concluido.connect(
+            lambda baixados, total: self._batch_download_done(baixados, total, output_dir)
+        )
+        self._batch_thread.start()
+
+    def _batch_download_done(self, clips_baixados, total_clips, output_dir):
+        """Callback when batch clip download finishes."""
+        self.progress_bar.setVisible(False)
+        self.btn_baixar_todos.setEnabled(True)
+        self.btn_analisar.setEnabled(True)
+
+        if clips_baixados == total_clips:
+            QMessageBox.information(
+                self, "Sucesso!",
+                f"Todos os {clips_baixados} clips foram baixados com sucesso!\n\nSalvos em: {output_dir}"
             )
-            self.progress_bar.setVisible(False)
-            self.btn_baixar_todos.setEnabled(True)
-            self.btn_analisar.setEnabled(True)
+            self.status_label.setText(f"✅ {clips_baixados} clips baixados!")
+        else:
+            QMessageBox.warning(
+                self, "Download Parcial",
+                f"{clips_baixados} de {total_clips} clips foram baixados.\nVerifique os logs para mais detalhes."
+            )
+            self.status_label.setText(f"⚠️ {clips_baixados}/{total_clips} clips baixados")
+
+        logger.info(f"Download em lote concluído: {clips_baixados}/{total_clips}")
     
     def get_clips_sugeridos(self):
         """Retorna lista de clips sugeridos"""
@@ -681,12 +690,13 @@ class ClipWidget(QWidget):
         self.combo_video.addItem("Selecione um vídeo...")
         
         try:
+            from config.paths import APP_DIR
             # Procurar vídeos em possíveis pastas de download
             pastas_busca = [
                 Path.home() / "Downloads",
-                Path.cwd() / "downloads",
-                Path.cwd() / "output",
-                Path.cwd(),
+                APP_DIR / "downloads",
+                APP_DIR / "output",
+                settings.output_dir,
             ]
             
             extensoes_video = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
@@ -753,17 +763,17 @@ class ClipWidget(QWidget):
                     f"📁 {self.video_path.parent}\n"
                     f"💾 {tamanho_mb:.1f} MB"
                 )
-                self.info_video.setStyleSheet("color: #4CAF50; margin: 5px;")
+                self.info_video.setStyleSheet("color: #22c55e; margin: 5px;")
                 self.btn_analisar.setEnabled(True)
                 
                 logger.info(f"Vídeo selecionado: {self.video_path}")
                 
             except Exception as e:
-                self.info_video.setText(f"❌ Erro ao acessar arquivo: {e}")
-                self.info_video.setStyleSheet("color: #f44336; margin: 5px;")
+                self.info_video.setText(f"Erro ao acessar arquivo: {e}")
+                self.info_video.setStyleSheet("color: #ef4444; margin: 5px;")
                 self.btn_analisar.setEnabled(False)
         else:
             self.video_path = None
             self.info_video.setText("Nenhum vídeo selecionado")
-            self.info_video.setStyleSheet("color: #888; font-style: italic; margin: 5px;")
+            self.info_video.setStyleSheet("color: #64748b; font-style: italic; margin: 5px;")
             self.btn_analisar.setEnabled(False)
