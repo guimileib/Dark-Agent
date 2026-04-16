@@ -111,14 +111,14 @@ class ClipItemWidget(QFrame):
         self.setObjectName("ClipItem")
         self.setStyleSheet("""
             QFrame#ClipItem {
-                background-color: rgba(30, 41, 59, 0.5);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                margin-bottom: 8px;
+                background-color: rgba(15, 23, 42, 0.5);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 16px;
+                margin-bottom: 6px;
             }
             QFrame#ClipItem:hover {
-                background-color: rgba(59, 130, 246, 0.1);
-                border: 1px solid #3b82f6;
+                background-color: rgba(59, 130, 246, 0.08);
+                border: 1px solid rgba(59, 130, 246, 0.3);
             }
         """)
         
@@ -178,29 +178,33 @@ class ClipItemWidget(QFrame):
         return f"{mins:02d}:{secs:02d}"
     
     def _get_score_color(self, score):
-        """Retorna cor baseada no score"""
+        """Retorna cor baseada no score — alinhado com a paleta moderna"""
         if score >= 0.8:
-            return "#00ff00"  # Verde forte
+            return "#22c55e"  # Success green
         elif score >= 0.6:
-            return "#ffcc00"  # Amarelo
+            return "#eab308"  # Warning yellow
         elif score >= 0.4:
-            return "#ff9900"  # Laranja
+            return "#f97316"  # Orange
         else:
-            return "#ff3300"  # Vermelho
+            return "#ef4444"  # Error red
     
     def _get_progressbar_style(self, score):
         """Retorna estilo da barra baseado no score"""
         color = self._get_score_color(score)
         return f"""
             QProgressBar {{
-                border: 2px solid #333;
+                border: none;
                 border-radius: 5px;
                 text-align: center;
-                background-color: #1a1a1a;
+                background-color: rgba(15, 23, 42, 0.6);
+                color: #e2e8f0;
+                font-weight: 600;
+                font-size: 11px;
+                max-height: 14px;
             }}
             QProgressBar::chunk {{
                 background-color: {color};
-                border-radius: 3px;
+                border-radius: 5px;
             }}
         """
 
@@ -394,23 +398,26 @@ class ClipWidget(QWidget):
         self.results_expanded = False
         self.original_top_height = 0
         
-        self.btn_expand = QPushButton("🔎 Ampliar")
+        self.btn_expand = QPushButton("Ampliar")
         self.btn_expand.setCheckable(True)
         self.btn_expand.setStyleSheet("""
             QPushButton {
-                background-color: rgba(59, 130, 246, 0.2);
-                border: 1px solid #3b82f6;
-                color: #3b82f6;
-                border-radius: 4px;
-                padding: 4px 10px;
-                font-weight: bold;
+                background-color: rgba(59, 130, 246, 0.12);
+                border: 1.5px solid rgba(59, 130, 246, 0.3);
+                color: #60a5fa;
+                border-radius: 10px;
+                padding: 6px 14px;
+                font-weight: 700;
+                font-size: 12px;
             }
             QPushButton:hover {
-                background-color: rgba(59, 130, 246, 0.3);
+                background-color: rgba(59, 130, 246, 0.2);
+                border-color: #3b82f6;
             }
             QPushButton:checked {
                 background-color: #3b82f6;
                 color: white;
+                border-color: #3b82f6;
             }
         """)
         self.btn_expand.clicked.connect(self.toggle_results_expansion)
@@ -756,17 +763,17 @@ class ClipWidget(QWidget):
                     f"📁 {self.video_path.parent}\n"
                     f"💾 {tamanho_mb:.1f} MB"
                 )
-                self.info_video.setStyleSheet("color: #4CAF50; margin: 5px;")
+                self.info_video.setStyleSheet("color: #22c55e; margin: 5px;")
                 self.btn_analisar.setEnabled(True)
                 
                 logger.info(f"Vídeo selecionado: {self.video_path}")
                 
             except Exception as e:
-                self.info_video.setText(f"❌ Erro ao acessar arquivo: {e}")
-                self.info_video.setStyleSheet("color: #f44336; margin: 5px;")
+                self.info_video.setText(f"Erro ao acessar arquivo: {e}")
+                self.info_video.setStyleSheet("color: #ef4444; margin: 5px;")
                 self.btn_analisar.setEnabled(False)
         else:
             self.video_path = None
             self.info_video.setText("Nenhum vídeo selecionado")
-            self.info_video.setStyleSheet("color: #888; font-style: italic; margin: 5px;")
+            self.info_video.setStyleSheet("color: #64748b; font-style: italic; margin: 5px;")
             self.btn_analisar.setEnabled(False)

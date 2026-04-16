@@ -10,7 +10,7 @@ from PyQt6.QtGui import QIcon
 
 from config.settings import settings
 from config.paths import APP_DIR
-from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget
+from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget, EditorWidget
 from core import (
     VideoDownloader, VideoValidator, Transcriber,
     SubtitleGenerator, VideoEditor, PreviewRenderer
@@ -395,20 +395,27 @@ class MainWindow(QMainWindow):
         msg_box.setStyleSheet("""
             QMessageBox {
                 background-color: #1e293b;
-                color: white;
+                color: #e2e8f0;
+                border-radius: 16px;
             }
             QLabel {
-                color: white;
+                color: #e2e8f0;
+                font-size: 14px;
             }
             QPushButton {
                 background-color: #3b82f6;
                 color: white;
                 border: none;
-                padding: 5px 15px;
-                border-radius: 4px;
+                padding: 8px 22px;
+                border-radius: 10px;
+                font-weight: 600;
+                min-width: 80px;
             }
             QPushButton:hover {
                 background-color: #2563eb;
+            }
+            QPushButton:pressed {
+                background-color: #1d4ed8;
             }
         """)
         
@@ -437,17 +444,26 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         
         layout = QVBoxLayout()
-        
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 8, 16, 16)
+
         # Header
         header_container = QWidget()
+        header_container.setStyleSheet("background: transparent;")
         header_layout = QVBoxLayout(header_container)
-        header_layout.setContentsMargins(0, 10, 0, 20)
-        
-        titulo = QLabel(f"DarkAgent Pro v{__version__}")
-        titulo.setObjectName("HeaderTitle") # For QSS styling
+        header_layout.setContentsMargins(0, 8, 0, 12)
+        header_layout.setSpacing(4)
+
+        titulo = QLabel(f"DarkAgent Pro")
+        titulo.setObjectName("HeaderTitle")
         titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(titulo)
-        
+
+        subtitulo = QLabel(f"v{__version__}")
+        subtitulo.setObjectName("SubTitle")
+        subtitulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(subtitulo)
+
         layout.addWidget(header_container)
         
         # Criar TabWidget
@@ -489,6 +505,10 @@ class MainWindow(QMainWindow):
         self.upload_widget = UploadWidget()
         self.tab_widget.addTab(self.upload_widget, "Upload")
 
+        # Aba Editor (Overlay Editor)
+        self.editor_widget = EditorWidget()
+        self.tab_widget.addTab(self.editor_widget, "Editor")
+
         # NOTE: previews are generated asynchronously by iniciar_geracao_previews()
         # in __init__. Do NOT call gerar_previews_iniciais() here (it was synchronous
         # and duplicated the work, blocking the UI on startup).
@@ -496,9 +516,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.tab_widget)
         
         # Botão processar
-        self.btn_processar = QPushButton("🎬 PROCESSAR COM LEGENDAS")
-        self.btn_processar.setMinimumHeight(50)
-        self.btn_processar.setStyleSheet("font-size: 16px;")
+        self.btn_processar = QPushButton("PROCESSAR COM LEGENDAS")
+        self.btn_processar.setObjectName("ProcessButton")
+        self.btn_processar.setMinimumHeight(54)
+        self.btn_processar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_processar.clicked.connect(self.processar_video)
         layout.addWidget(self.btn_processar)
         
@@ -514,21 +535,22 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.progress_bar)
         
         self.status_label = QLabel("")
+        self.status_label.setObjectName("StatusLabel")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
         
         central_widget.setLayout(layout)
 
         # Tamanho mínimo e padrão — permite redimensionamento livre
-        self.setMinimumSize(800, 600)
-        self.resize(1280, 800)
+        self.setMinimumSize(850, 650)
+        self.resize(1300, 820)
 
         # Centralizar na tela
         screen = self.screen()
         if screen:
             screen_geometry = screen.availableGeometry()
-            x = (screen_geometry.width() - 1280) // 2 + screen_geometry.x()
-            y = (screen_geometry.height() - 800) // 2 + screen_geometry.y()
+            x = (screen_geometry.width() - 1300) // 2 + screen_geometry.x()
+            y = (screen_geometry.height() - 820) // 2 + screen_geometry.y()
             self.move(x, y)
     
     def aplicar_tema(self):

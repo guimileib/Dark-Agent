@@ -118,7 +118,7 @@ class OnboardingDialog(QDialog):
                 # Placeholder
                 lbl_placeholder = QLabel(f"[{image_name}]")
                 lbl_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lbl_placeholder.setStyleSheet("color: #666; font-size: 14px; border: 2px dashed #444; border-radius: 10px; padding: 20px;")
+                lbl_placeholder.setStyleSheet("color: #64748b; font-size: 14px; border: 2px dashed rgba(51, 65, 85, 0.6); border-radius: 16px; padding: 24px; background: rgba(15, 23, 42, 0.3);")
                 layout.addWidget(lbl_placeholder)
         
         # Descrição
@@ -203,49 +203,59 @@ class OnboardingDialog(QDialog):
     def aplicar_estilo(self):
         self.setStyleSheet("""
             QDialog {
-                background-color: #1e1e1e;
-                color: #ffffff;
+                background-color: #0f172a;
+                color: #f0f4ff;
             }
             QLabel#SlideTitle {
                 font-size: 28px;
-                font-weight: bold;
-                color: #ffffff;
-                margin-bottom: 20px;
+                font-weight: 800;
+                color: #f8fafc;
+                letter-spacing: -0.3px;
+                margin-bottom: 16px;
             }
             QLabel#SlideDesc {
-                font-size: 16px;
-                color: #cccccc;
-                line-height: 1.5;
+                font-size: 15px;
+                color: #cbd5e1;
+                line-height: 1.6;
             }
             QFrame#NavBar {
-                background-color: #252525;
-                border-top: 1px solid #333;
+                background-color: rgba(8, 12, 22, 0.9);
+                border-top: 1px solid rgba(51, 65, 85, 0.4);
             }
             QLabel#PageIndicator {
-                color: #666;
-                font-weight: bold;
+                color: #64748b;
+                font-weight: 700;
+                font-size: 12px;
             }
             QPushButton#BtnPrimary {
-                background-color: #007acc;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #3b82f6, stop:1 #6366f1);
                 color: white;
                 border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                font-weight: bold;
+                padding: 11px 28px;
+                border-radius: 12px;
+                font-weight: 700;
                 font-size: 14px;
             }
             QPushButton#BtnPrimary:hover {
-                background-color: #0062a3;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #2563eb, stop:1 #4f46e5);
+            }
+            QPushButton#BtnPrimary:pressed {
+                background: #1d4ed8;
             }
             QPushButton#BtnSecondary {
                 background-color: transparent;
-                color: #cccccc;
-                border: 1px solid #444;
-                padding: 10px 20px;
-                border-radius: 5px;
+                color: #94a3b8;
+                border: 1.5px solid rgba(51, 65, 85, 0.6);
+                padding: 11px 22px;
+                border-radius: 12px;
+                font-weight: 600;
+                font-size: 13px;
             }
             QPushButton#BtnSecondary:hover {
-                background-color: #333;
-                color: white;
+                background-color: rgba(51, 65, 85, 0.4);
+                color: #e2e8f0;
+                border-color: rgba(59, 130, 246, 0.3);
             }
         """)
