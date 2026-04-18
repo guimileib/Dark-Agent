@@ -1,12 +1,11 @@
 """Renderizador de previews de legendas usando Pillow (rápido, sem FFmpeg)"""
 
 import logging
-import random
 from pathlib import Path
 from typing import Optional
 
 try:
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    from PIL import Image, ImageDraw, ImageFont
     PILLOW_OK = True
 except ImportError:
     PILLOW_OK = False
@@ -20,29 +19,21 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Paleta de fundos simulados para diferentes estilos
-_BACKGROUNDS = {
-    "tiktok_classic":  [(10, 10, 20), (25, 15, 35)],
-    "tiktok_bold":     [(5, 5, 5), (20, 5, 10)],
-    "reels_bold":      [(15, 10, 30), (30, 20, 50)],
-    "youtube_shorts":  [(8, 12, 22), (20, 25, 40)],
-    "clean_minimal":   [(18, 20, 28), (30, 33, 45)],
-    "neon_glow":       [(5, 5, 15), (10, 5, 25)],
-    "bold_impact":     [(5, 5, 5), (15, 10, 10)],
-    "gradient_wave":   [(10, 15, 30), (20, 30, 55)],
-}
+# Fontes Windows padrão — prioriza Segoe UI Black/Bold para ficar coerente
+# com os cards "Aa" do subtitle_widget (QFont "Segoe UI" ExtraBold).
+_WINDOWS_FONTS_BOLD = [
+    "C:/Windows/Fonts/seguibl.ttf",    # Segoe UI Black
+    "C:/Windows/Fonts/segoeuib.ttf",   # Segoe UI Bold
+    "C:/Windows/Fonts/arialbd.ttf",    # Arial Bold
+    "C:/Windows/Fonts/calibrib.ttf",   # Calibri Bold
+    "C:/Windows/Fonts/verdanab.ttf",   # Verdana Bold
+]
 
-_DEFAULT_BG = [(10, 12, 20), (25, 28, 45)]
-
-# Fontes Windows padrão para fallback
-_WINDOWS_FONTS = [
-    "C:/Windows/Fonts/arialbd.ttf",   # Arial Bold
-    "C:/Windows/Fonts/arial.ttf",     # Arial
-    "C:/Windows/Fonts/calibrib.ttf",  # Calibri Bold
-    "C:/Windows/Fonts/calibri.ttf",   # Calibri
-    "C:/Windows/Fonts/trebucbd.ttf",  # Trebuchet Bold
-    "C:/Windows/Fonts/verdanab.ttf",  # Verdana Bold
-    "C:/Windows/Fonts/verdana.ttf",   # Verdana
+_WINDOWS_FONTS_REGULAR = [
+    "C:/Windows/Fonts/segoeui.ttf",    # Segoe UI
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/calibri.ttf",
+    "C:/Windows/Fonts/verdana.ttf",
 ]
 
 
@@ -57,13 +48,9 @@ def _ass_to_rgb(cor_ass: str) -> tuple[int, int, int]:
     return (255, 255, 255)
 
 
-def _load_font(tamanho: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+def _load_font(tamanho: int, bold: bool = True) -> ImageFont.FreeTypeFont:
     """Tenta carregar fonte do sistema, com fallback."""
-    candidates = _WINDOWS_FONTS if not bold else [
-        "C:/Windows/Fonts/arialbd.ttf",
-        "C:/Windows/Fonts/verdanab.ttf",
-        "C:/Windows/Fonts/calibrib.ttf",
-    ]
+    candidates = _WINDOWS_FONTS_BOLD if bold else _WINDOWS_FONTS_REGULAR
     for path in candidates:
         if Path(path).exists():
             try:
@@ -73,55 +60,36 @@ def _load_font(tamanho: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-def _draw_gradient_bg(draw: ImageDraw.Draw, w: int, h: int, colors: list) -> None:
-    """Desenha fundo com gradiente vertical."""
-    c1 = colors[0]
-    c2 = colors[1]
-    for y in range(h):
-        t = y / h
-        r = int(c1[0] + (c2[0] - c1[0]) * t)
-        g = int(c1[1] + (c2[1] - c1[1]) * t)
-        b = int(c1[2] + (c2[2] - c1[2]) * t)
-        draw.line([(0, y), (w, y)], fill=(r, g, b))
+def _draw_play_icon(draw: ImageDraw.Draw, w: int, h: int) -> None:
+    """Desenha um círculo com triângulo de play no centro superior do canvas."""
+    cx, cy = w // 2, int(h * 0.38)
+    radius = int(min(w, h) * 0.12)
 
+    # Halo sutil (círculo externo semitransparente)
+    halo_r = radius + 14
+    for i in range(6):
+        a = 40 - i * 6
+        draw.ellipse(
+            [cx - halo_r - i, cy - halo_r - i, cx + halo_r + i, cy + halo_r + i],
+            outline=(255, 255, 255, max(a, 0)),
+            width=1,
+        )
 
-def _draw_fake_scene(draw: ImageDraw.Draw, w: int, h: int) -> None:
-    """Adiciona elementos de cena falsa para simular um frame de vídeo."""
-    # Linha do horizonte sutil
-    draw.rectangle([0, int(h * 0.55), w, int(h * 0.58)],
-                   fill=(255, 255, 255, 10))
+    # Círculo de fundo do botão play
+    draw.ellipse(
+        [cx - radius, cy - radius, cx + radius, cy + radius],
+        fill=(255, 255, 255),
+        outline=(220, 220, 220),
+        width=2,
+    )
 
-    # Silhuetas de prédios (rectangle escuros)
-    buildings = [
-        (w * 0.05, h * 0.30, w * 0.18, h * 0.55),
-        (w * 0.20, h * 0.20, w * 0.30, h * 0.55),
-        (w * 0.32, h * 0.35, w * 0.45, h * 0.55),
-        (w * 0.55, h * 0.25, w * 0.65, h * 0.55),
-        (w * 0.68, h * 0.15, w * 0.78, h * 0.55),
-        (w * 0.80, h * 0.30, w * 0.92, h * 0.55),
-    ]
-    for bx0, by0, bx1, by1 in buildings:
-        dark = (0, 0, 0, 180)
-        draw.rectangle([int(bx0), int(by0), int(bx1), int(by1)], fill=(8, 10, 16))
-
-    # Janelas nos prédios (pontilhados amarelos)
-    for bx0, by0, bx1, by1 in buildings:
-        bw = int(bx1 - bx0)
-        bh = int(by1 - by0)
-        cols = max(2, bw // 12)
-        rows = max(3, bh // 14)
-        win_w = max(2, bw // (cols * 2))
-        win_h = max(2, bh // (rows * 2))
-        for row in range(rows):
-            for col in range(cols):
-                if random.random() > 0.35:
-                    wx = int(bx0) + col * (bw // cols) + 3
-                    wy = int(by0) + row * (bh // rows) + 3
-                    draw.rectangle([wx, wy, wx + win_w, wy + win_h],
-                                   fill=(255, 220, 120))
-
-    # Ground
-    draw.rectangle([0, int(h * 0.55), w, h], fill=(5, 6, 10))
+    # Triângulo de play (preto, ligeiramente deslocado à direita p/ parecer centrado)
+    tri_size = int(radius * 0.55)
+    tri_x_offset = int(radius * 0.12)
+    p1 = (cx - tri_size // 2 + tri_x_offset, cy - tri_size)
+    p2 = (cx - tri_size // 2 + tri_x_offset, cy + tri_size)
+    p3 = (cx + tri_size + tri_x_offset, cy)
+    draw.polygon([p1, p2, p3], fill=(15, 15, 15))
 
 
 class PreviewRenderer:
@@ -154,7 +122,9 @@ class PreviewRenderer:
 
         tamanho_atual = tamanho if tamanho is not None else estilo.tamanho
         cor_safe = estilo.cor_primaria.replace("&H", "").replace("&", "")
-        output_path = output_dir / f"{estilo.id}_size{tamanho_atual}_{cor_safe}.png"
+        # "_v2" marca a nova renderização (fundo preto + play icon) — bypassa
+        # o cache de PNGs antigos com cityscape.
+        output_path = output_dir / f"{estilo.id}_size{tamanho_atual}_{cor_safe}_v2.png"
 
         if output_path.exists() and not force:
             return output_path
@@ -208,25 +178,14 @@ class PreviewRenderer:
     ) -> Optional[Path]:
         w, h = self.canvas_size
 
+        # Fundo totalmente preto — simula frame de vídeo pausado.
         img = Image.new("RGB", (w, h), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # 1. Fundo gradiente baseado no estilo
-        bg_colors = _BACKGROUNDS.get(estilo.id, _DEFAULT_BG)
-        _draw_gradient_bg(draw, w, h, bg_colors)
+        # Ícone de play centralizado no topo.
+        _draw_play_icon(draw, w, h)
 
-        # 2. Cena de fundo (skyline)
-        _draw_fake_scene(draw, w, h)
-
-        # 3. Overlay escuro na parte inferior para legibilidade da legenda
-        overlay_h = int(h * 0.38)
-        overlay_y = h - overlay_h
-        for y_off in range(overlay_h):
-            alpha = int(160 * (y_off / overlay_h))
-            draw.line([(0, overlay_y + y_off), (w, overlay_y + y_off)],
-                      fill=(0, 0, 0))
-
-        # 4. Texto da legenda
+        # Texto da legenda
         texto = getattr(estilo, "texto_exemplo", "Texto de Exemplo")
         cor_texto = _ass_to_rgb(estilo.cor_primaria)
         cor_borda = _ass_to_rgb(getattr(estilo, "cor_borda", "&H000000"))

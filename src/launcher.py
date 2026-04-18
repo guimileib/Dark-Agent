@@ -184,9 +184,8 @@ class LauncherSplash(QWidget):
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(600, 350)
+        self.setFixedSize(480, 480)
 
-        # Taskbar icon / window icon
         icon_png = ASSETS_DIR / "icon.png"
         icon_ico = ASSETS_DIR / "icon.ico"
         if icon_ico.exists():
@@ -200,13 +199,12 @@ class LauncherSplash(QWidget):
             screen.y() + (screen.height() - self.height()) // 2,
         )
 
-        # Background panel (rounded, gradient)
         self._bg = QWidget(self)
         self._bg.setStyleSheet("""
             QWidget {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 #080c16, stop:0.5 #0f172a, stop:1 #0c1425);
-                border-radius: 20px;
+                border-radius: 24px;
                 border: 1px solid rgba(59, 130, 246, 0.15);
             }
         """)
@@ -215,9 +213,8 @@ class LauncherSplash(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 20, 40, 40)
-        layout.setSpacing(18)
+        layout.setSpacing(0)
 
-        # Top bar (minimize button)
         top_bar = QHBoxLayout()
         top_bar.addStretch()
         self.btn_minimize = QPushButton("─")
@@ -241,25 +238,35 @@ class LauncherSplash(QWidget):
         top_bar.addWidget(self.btn_minimize)
         layout.addLayout(top_bar)
 
-        # Optional app icon
+        layout.addStretch(1)
+
+        # Hero favicon — visual central do launcher
+        icon_label = QLabel()
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("background: transparent; border: none;")
         if icon_png.exists():
-            icon_label = QLabel()
             pixmap = QPixmap(str(icon_png)).scaled(
-                72, 72,
+                200, 200,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
             icon_label.setPixmap(pixmap)
-            icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            icon_label.setStyleSheet("background: transparent; border: none;")
-            layout.addWidget(icon_label)
+            icon_label.setFixedHeight(210)
+            icon_glow = QGraphicsDropShadowEffect(icon_label)
+            icon_glow.setBlurRadius(60)
+            icon_glow.setXOffset(0)
+            icon_glow.setYOffset(0)
+            icon_glow.setColor(QColor(99, 102, 241, 180))
+            icon_label.setGraphicsEffect(icon_glow)
+        layout.addWidget(icon_label)
 
-        # Title
+        layout.addSpacing(20)
+
         self.logo_label = QLabel("DarkAgent Pro")
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.logo_label.setStyleSheet("""
             color: #f8fafc;
-            font-size: 28px;
+            font-size: 24px;
             font-weight: 800;
             font-family: 'Segoe UI', sans-serif;
             letter-spacing: -0.5px;
@@ -268,22 +275,8 @@ class LauncherSplash(QWidget):
         """)
         layout.addWidget(self.logo_label)
 
-        self.subtitle_label = QLabel("AI Video Studio")
-        self.subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.subtitle_label.setStyleSheet("""
-            color: #60a5fa;
-            font-size: 13px;
-            font-weight: 600;
-            font-family: 'Segoe UI', sans-serif;
-            letter-spacing: 2px;
-            background: transparent;
-            border: none;
-        """)
-        layout.addWidget(self.subtitle_label)
+        layout.addStretch(1)
 
-        layout.addStretch()
-
-        # Status + progress
         self.status_label = QLabel("Verificando dependências...")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet(
@@ -291,6 +284,8 @@ class LauncherSplash(QWidget):
             "letter-spacing: 0.3px; background: transparent; border: none;"
         )
         layout.addWidget(self.status_label)
+
+        layout.addSpacing(12)
 
         self.progress = QProgressBar()
         self.progress.setMaximum(100)
