@@ -115,8 +115,8 @@ def main():
         myappid = 'darkagent.pro.v2.0'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
-    # Criar aplicação Qt
-    app = QApplication(sys.argv)
+    # Criar aplicação Qt — reutiliza a instância do launcher se existir.
+    app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("DarkAgent Pro")
     app.setApplicationVersion(__version__)
 
