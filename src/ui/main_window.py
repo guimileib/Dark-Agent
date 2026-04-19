@@ -556,10 +556,13 @@ class MainWindow(QMainWindow):
     def aplicar_tema(self):
         """Aplica tema escuro moderno"""
         tema_path = settings.assets_dir / "styles" / "modern_theme.qss"
-        
+
         if tema_path.exists():
             with open(tema_path, 'r', encoding='utf-8') as f:
-                self.setStyleSheet(f.read())
+                qss = f.read()
+            icons_dir = (settings.assets_dir / "icons").as_posix()
+            qss = qss.replace("{ICONS_DIR}", icons_dir)
+            self.setStyleSheet(qss)
         else:
             logger.warning(f"Tema não encontrado em: {tema_path}")
     

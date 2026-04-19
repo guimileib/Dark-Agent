@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('src/assets', 'src/assets'), ('src/config', 'src/config')]
 binaries = []
-hiddenimports = ['PIL', 'PyQt6']
+hiddenimports = ['PIL', 'PyQt6', 'PyQt6.QtSvg', 'PyQt6.QtSvgWidgets']
 tmp_ret = collect_all('whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('torch')
@@ -12,7 +12,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 a = Analysis(
     ['src\\launcher.py'],
-    pathex=['src'],
+    pathex=[],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -24,12 +24,6 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
-
-# NOTE: Use .ico for Windows executable icon. Convert icon.png to icon.ico
-# with: magick convert src/assets/icon.png -define icon:auto-resize=256,128,64,48,32,16 src/assets/icon.ico
-# If icon.ico does not exist, PyInstaller will skip it gracefully.
-import os
-icon_file = 'src\\assets\\icon.ico' if os.path.exists('src\\assets\\icon.ico') else []
 
 exe = EXE(
     pyz,
@@ -50,5 +44,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=icon_file,
+    icon=['src\\assets\\icon.png'],
 )
