@@ -1,6 +1,7 @@
 """Transcrição otimizada com Whisper"""
 
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Optional, Dict
@@ -8,8 +9,10 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-# Cache global de modelos
-MODEL_CACHE = {}
+# Cache global de modelos. Sem lock, duas threads de batch com o mesmo modelo
+# carregariam whisper.load_model() simultaneamente, duplicando 1–4 GB na GPU.
+MODEL_CACHE: Dict[str, object] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
 
 
 class Transcriber:
@@ -87,31 +90,25 @@ class Transcriber:
             raise
     
     def _carregar_modelo(self):
-        """Carrega modelo Whisper com cache"""
-        global MODEL_CACHE
-        
+        """Carrega modelo Whisper com cache — thread-safe."""
         cache_key = f"{self.modelo_nome}_{self.device}"
-        
-        if cache_key not in MODEL_CACHE:
-            logger.info(f"Carregando modelo Whisper '{self.modelo_nome}'...")
-            
-            try:
-                import whisper
-                
-                modelo = whisper.load_model(
-                    self.modelo_nome,
-                    device=self.device,
-                    download_root=None
-                )
-                
-                MODEL_CACHE[cache_key] = modelo
-                logger.info(f"Modelo carregado com sucesso")
-                
-            except Exception as e:
-                logger.error(f"Erro ao carregar modelo: {e}")
-                raise
-        
-        return MODEL_CACHE[cache_key]
+
+        with _MODEL_CACHE_LOCK:
+            if cache_key not in MODEL_CACHE:
+                logger.info(f"Carregando modelo Whisper '{self.modelo_nome}'...")
+                try:
+                    import whisper
+
+                    MODEL_CACHE[cache_key] = whisper.load_model(
+                        self.modelo_nome,
+                        device=self.device,
+                        download_root=None,
+                    )
+                    logger.info("Modelo carregado com sucesso")
+                except Exception as e:
+                    logger.error(f"Erro ao carregar modelo: {e}")
+                    raise
+            return MODEL_CACHE[cache_key]
     
     def _processar_resultado(self, resultado: dict, tempo: float) -> dict:
         """Processa resultado bruto do Whisper"""
@@ -204,10 +201,10 @@ class Transcriber:
     @staticmethod
     def limpar_cache():
         """Limpa cache de modelos"""
-        global MODEL_CACHE
-        MODEL_CACHE.clear()
-        
+        with _MODEL_CACHE_LOCK:
+            MODEL_CACHE.clear()
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        
+
         logger.info("Cache de modelos limpo")

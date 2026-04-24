@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 class SinglePreviewGeneratorThread(QThread):
     """Thread para gerar um único preview sob demanda"""
-    
+
     preview_ready = pyqtSignal(str)  # caminho
-    
+
     def __init__(self, renderer, estilo, tamanho, force=False, posicao="Embaixo"):
         super().__init__()
         self.renderer = renderer
@@ -31,6 +31,14 @@ class SinglePreviewGeneratorThread(QThread):
         self.tamanho = tamanho
         self.force = force
         self.posicao = posicao
+        # Flag para descartar o resultado se a thread ficou obsoleta (o usuário
+        # trocou de estilo antes dela terminar). Evita chamar terminate(), que
+        # mataria um Pillow render no meio e poderia deixar arquivo .png corrompido.
+        self._discarded = False
+
+    def discard(self):
+        """Marca a thread como obsoleta — o resultado será ignorado."""
+        self._discarded = True
 
     def run(self):
         try:
@@ -44,7 +52,7 @@ class SinglePreviewGeneratorThread(QThread):
                 posicao=self.posicao,
             )
 
-            if path:
+            if path and not self._discarded:
                 self.preview_ready.emit(str(path))
         except Exception as e:
             logger.error(f"Erro na thread de preview: {e}")
@@ -591,8 +599,12 @@ class SubtitleWidget(QWidget):
     
     def carregar_previews_existentes(self):
         """Carrega previews já existentes no disco"""
-        preview_dir = settings.assets_dir / "previews"
-        
+        try:
+            from config.paths import CACHE_DIR
+        except ImportError:
+            from ...config.paths import CACHE_DIR
+        preview_dir = CACHE_DIR / "previews"
+
         if not preview_dir.exists():
             logger.info("Diretório de previews não existe ainda")
             return
@@ -838,7 +850,6 @@ class SubtitleWidget(QWidget):
         """Atualiza o tamanho do estilo atual quando o combo muda"""
         if self.estilo_atual and texto.isdigit():
             self.estilo_atual.tamanho = int(texto)
-            self.estilo_atual.tamanho = int(texto)
             self.atualizar_preview()
 
     def selecionar_cor(self):
@@ -948,9 +959,15 @@ class SubtitleWidget(QWidget):
             )
             self.preview_canvas.setText("⏳ Gerando preview...")
 
+            # Thread anterior: descartar o resultado (deixa terminar naturalmente).
+            # terminate() interrompia um Pillow render no meio e potencialmente deixava
+            # PNG corrompido no cache. O render é rápido (<1s), então só ignoramos a saída.
             if self.preview_thread and self.preview_thread.isRunning():
-                self.preview_thread.terminate()
-                self.preview_thread.wait()
+                self.preview_thread.discard()
+                try:
+                    self.preview_thread.preview_ready.disconnect(self._on_preview_ready)
+                except (TypeError, RuntimeError):
+                    pass
 
             self.preview_thread = SinglePreviewGeneratorThread(
                 self.preview_renderer,

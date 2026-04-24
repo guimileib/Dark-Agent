@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import tempfile
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass, asdict, field
@@ -8,6 +10,30 @@ from datetime import datetime
 import uuid
 
 logger = logging.getLogger(__name__)
+
+
+def _atomic_write_json(path: Path, data) -> None:
+    """Escreve JSON de forma atômica: arquivo temporário + os.replace.
+
+    Garante que um crash no meio do dump não corrompa o arquivo original —
+    ou o conteúdo antigo continua intacto, ou o novo substitui integralmente.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 class SocialPlatform(Enum):
     YOUTUBE = "YouTube"
@@ -91,17 +117,19 @@ class SocialManager:
                 logger.error(f"Error loading posts: {e}")
 
     def save_data(self):
-        # Save Accounts
         try:
-            with open(self.accounts_file, 'w', encoding='utf-8') as f:
-                json.dump([a.to_dict() for a in self.accounts.values()], f, indent=2)
+            _atomic_write_json(
+                self.accounts_file,
+                [a.to_dict() for a in self.accounts.values()],
+            )
         except Exception as e:
             logger.error(f"Error saving accounts: {e}")
-            
-        # Save Posts
+
         try:
-            with open(self.posts_file, 'w', encoding='utf-8') as f:
-                json.dump([p.to_dict() for p in self.posts], f, indent=2)
+            _atomic_write_json(
+                self.posts_file,
+                [p.to_dict() for p in self.posts],
+            )
         except Exception as e:
             logger.error(f"Error saving posts: {e}")
 

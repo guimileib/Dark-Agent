@@ -1,9 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-datas = [('src/assets', 'src/assets'), ('src/config', 'src/config')]
+datas = [
+    ('src/assets', 'src/assets'),
+    ('src/config/estilos_padrao.json', 'src/config'),
+    ('src/config/config.json', 'src/config'),
+    ('src/__init__.py', 'src'),
+]
 binaries = []
-hiddenimports = ['PIL', 'PyQt6', 'PyQt6.QtSvg', 'PyQt6.QtSvgWidgets']
+hiddenimports = [
+    'PIL',
+    'PyQt6',
+    'PyQt6.QtSvg',
+    'PyQt6.QtSvgWidgets',
+    'main',
+    'torch_fix',
+]
+
+# Garantir que todos os subpacotes de src/ entrem no bundle, mesmo que sejam
+# carregados via import dinâmico/deferido.
+for _pkg in ('config', 'models', 'ui', 'utils', 'core'):
+    hiddenimports += collect_submodules(_pkg)
+
 tmp_ret = collect_all('whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('torch')
@@ -12,7 +30,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 a = Analysis(
     ['src\\launcher.py'],
-    pathex=[],
+    pathex=['src'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

@@ -13,9 +13,11 @@ except ImportError:
 try:
     from models import EstiloLegenda
     from config.settings import settings
+    from config.paths import CACHE_DIR
 except ImportError:
     from ..models import EstiloLegenda
     from ..config.settings import settings
+    from ..config.paths import CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +121,10 @@ class PreviewRenderer:
 
     def __init__(self, canvas_size: tuple = (640, 360)):
         self.canvas_size = canvas_size
-        self._preview_dir = settings.assets_dir / "previews"
+        # Previews são gerados em runtime e precisam ficar em área mutável
+        # (APP_DIR/cache). BUNDLE_DIR/src/assets é read-only no modo frozen e
+        # desaparece quando o .exe fecha.
+        self._preview_dir = CACHE_DIR / "previews"
         self._preview_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------

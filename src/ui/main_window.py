@@ -1,6 +1,7 @@
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton,
     QProgressBar, QLabel, QMessageBox, QTabWidget
@@ -141,14 +142,18 @@ class ProcessadorThread(QThread):
         
         try:
             for i, url in enumerate(urls):
+                if self.isInterruptionRequested():
+                    logger.info("Processamento interrompido pelo usuário")
+                    break
+
                 if not url.strip():
                     continue
-                
+
                 # Base progress calculation
                 # Each video takes (100 / total_videos)% of the total progress
                 video_progress_start = int((i / total_videos) * 100)
                 video_progress_chunk = 100 / total_videos
-                
+
                 def report_progress(msg, step_percent, _start=video_progress_start, _chunk=video_progress_chunk, _idx=i):
                     """
                     step_percent: 0-100 relative to this video
@@ -165,11 +170,12 @@ class ProcessadorThread(QThread):
 
                 logger.info(f"Processando: {url}")
                 report_progress("Iniciando...", 0)
-                
+
+                audio_path: Optional[Path] = None
                 try:
                     # Check if it is a local file
                     is_local_file = Path(url).exists() and Path(url).is_file()
-                    
+
                     if is_local_file:
                         caminho_video = Path(url)
                         report_progress(f"Arquivo local: {caminho_video.name}", 5)
@@ -181,64 +187,79 @@ class ProcessadorThread(QThread):
                             url,
                             self.config["qualidade"]
                         )
-                        
+
                         if not sucesso:
                             resultados["falha"].append((url, "Falha no download"))
                             continue
-                    
+
+                    if self.isInterruptionRequested():
+                        break
+
                     # Validar
                     report_progress("Validando vídeo...", 20)
                     valido, checks = VideoValidator.validar_video_completo(caminho_video)
-                    
+
                     if not valido:
                         resultados["falha"].append((url, f"Vídeo inválido: {checks}"))
                         continue
-                    
+
                     # Extrair áudio
                     report_progress("Extraindo áudio...", 30)
                     transcriber = Transcriber(
                         modelo=settings.whisper_model,
+                        device=settings.whisper_device,
                         idioma=settings.whisper_language  # None = auto-detect
                     )
                     audio_path = caminho_video.parent / f"audio_temp_{i}.wav"
-                    
+
                     if not transcriber.extrair_audio_de_video(caminho_video, audio_path):
                         resultados["falha"].append((url, "Falha ao extrair áudio"))
                         continue
-                    
+
+                    if self.isInterruptionRequested():
+                        break
+
                     # Transcrever
                     report_progress("Transcrevendo com IA...", 50)
                     transcricao = transcriber.transcrever(audio_path)
-                    
+
+                    if self.isInterruptionRequested():
+                        break
+
                     # Gerar legendas
                     report_progress("Gerando legendas...", 70)
                     subtitle_gen = SubtitleGenerator()
                     ass_path = caminho_video.parent / f"{caminho_video.stem}.ass"
-                    
+
                     subtitle_gen.gerar_ass(transcricao, self.estilo, ass_path)
-                    
+
                     # Queimar legendas
                     report_progress("Renderizando vídeo final...", 85)
                     editor = VideoEditor()
                     output_path = caminho_video.parent / f"{caminho_video.stem}_final.mp4"
-                    
+
                     if not editor.queimar_legendas(caminho_video, ass_path, output_path):
                         resultados["falha"].append((url, "Falha ao renderizar"))
                         continue
-                    
-                    # Limpar temporários
-                    audio_path.unlink(missing_ok=True)
-                    
+
                     resultados["sucesso"].append((url, output_path))
                     report_progress("Concluído!", 100)
-                    
+
                 except Exception as e:
                     logger.error(f"Erro ao processar {url}: {e}")
                     resultados["falha"].append((url, str(e)))
-            
+                finally:
+                    # Sempre limpar o .wav temporário (vários GB em vídeos longos),
+                    # mesmo em caso de erro ou cancelamento.
+                    if audio_path is not None:
+                        try:
+                            audio_path.unlink(missing_ok=True)
+                        except OSError as e:
+                            logger.warning(f"Falha ao remover temp audio {audio_path}: {e}")
+
             self.progresso.emit("Processamento concluído!", 100)
             self.concluido.emit(resultados)
-            
+
         except Exception as e:
             logger.error(f"Erro fatal no processamento: {e}")
             self.concluido.emit(resultados)
@@ -296,8 +317,12 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.thread_processamento = None
-        self.thread_preview = None
+        # Thread attributes must be initialized here — sem referência forte em
+        # self, o GC pode destruir o objeto Python enquanto a thread nativa ainda
+        # está rodando (undefined behavior no Qt).
+        self.thread_processamento: Optional[QThread] = None
+        self.thread_preview: Optional[QThread] = None
+        self.thread_update: Optional[QThread] = None
         self.init_ui()
         self.aplicar_tema()
         
@@ -604,6 +629,9 @@ class MainWindow(QMainWindow):
         return (self.thread_processamento is not None
                 and self.thread_processamento.isRunning())
 
+    def _is_preview_thread_running(self) -> bool:
+        return self.thread_preview is not None and self.thread_preview.isRunning()
+
     def processar_video(self):
         """Inicia processamento do vídeo (Batch Auto)"""
         if self._is_thread_running():
@@ -649,9 +677,10 @@ class MainWindow(QMainWindow):
         self.thread_processamento.start()
     
     def atualizar_progresso(self, mensagem: str, percentual: int):
-        """Atualiza barra de progresso"""
+        """Atualiza barra de progresso do processamento (prioridade sobre preview)."""
         self.status_label.setText(mensagem)
         self.progress_bar.setValue(percentual)
+        self.progress_bar.setVisible(True)
     
     def processamento_concluido(self, resultados):
         """Callback quando processamento termina (Batch)"""
@@ -676,11 +705,11 @@ class MainWindow(QMainWindow):
         self.status_label.setText("")
         
         # Hide only if preview thread is not running
-        if not hasattr(self, 'thread_preview') or not self.thread_preview or not self.thread_preview.isRunning():
+        if not self._is_preview_thread_running():
             self.progress_bar.setVisible(False)
-            
+
         self.progress_bar.setValue(0)
-    
+
         # Auto-preencher aba de upload com o primeiro sucesso
         if sucessos and hasattr(self, 'upload_widget'):
             output_path = str(sucessos[0][1])
@@ -703,21 +732,25 @@ class MainWindow(QMainWindow):
         logger.info("Iniciando geração de previews em segundo plano...")
     
     def atualizar_progresso_preview(self, atual: int, total: int, estilo_nome: str):
-        """Atualiza status da geração de previews"""
+        """Atualiza status da geração de previews — cede o label/bar para o processamento quando ativo."""
+        if total <= 0:
+            return
         percentual = int((atual / total) * 100)
         logger.info(f"Gerando previews: {atual}/{total} ({percentual}%) - {estilo_nome}")
-        
-        # Opcional: mostrar no status label se não estiver processando vídeo
-        if not hasattr(self, 'thread_processamento') or not self.thread_processamento or not self.thread_processamento.isRunning():
-            self.status_label.setText(f"🎨 Gerando previews: {percentual}%")
-            self.progress_bar.setValue(percentual)
-    
+
+        # Processamento tem prioridade absoluta sobre status de preview.
+        if self._is_thread_running():
+            return
+
+        self.status_label.setText(f"🎨 Gerando previews: {percentual}%")
+        self.progress_bar.setValue(percentual)
+
     def previews_concluidos(self):
         """Callback quando todos os previews foram gerados"""
         logger.info("Todos os previews gerados com sucesso!")
-        
+
         # Limpar status se não estiver processando
-        if not hasattr(self, 'thread_processamento') or not self.thread_processamento or not self.thread_processamento.isRunning():
+        if not self._is_thread_running():
             self.status_label.setText("✅ Previews carregados")
             self.progress_bar.setVisible(False)
             self.progress_bar.setValue(0)
@@ -792,7 +825,7 @@ class MainWindow(QMainWindow):
             self.show_centered_message("Relatório — Baixar + Legendar", msg, icon)
 
         self.status_label.setText("")
-        if not (hasattr(self, 'thread_preview') and self.thread_preview and self.thread_preview.isRunning()):
+        if not self._is_preview_thread_running():
             self.progress_bar.setVisible(False)
         self.progress_bar.setValue(0)
 
@@ -919,15 +952,26 @@ class MainWindow(QMainWindow):
                 logger.info("Limpando cache de previews ao fechar...")
                 self.preview_renderer.limpar_cache()
 
-            # Request interruption and wait (quit() has no effect on run()-based threads)
-            for name, thread in [("preview", self.thread_preview), ("processamento", self.thread_processamento)]:
+            # Request interruption and wait (quit() has no effect on run()-based threads).
+            # NÃO usamos terminate() como fallback — matar a thread no meio de um
+            # subprocess.run(ffmpeg) deixa o processo filho zumbi e pode corromper o
+            # arquivo de saída. Se a thread não responde à interrupção em 10s, é um bug
+            # no run() (loop bloqueante sem checar isInterruptionRequested) — logamos e
+            # deixamos o OS encerrar no shutdown do processo.
+            threads = [
+                ("preview", getattr(self, "thread_preview", None)),
+                ("processamento", getattr(self, "thread_processamento", None)),
+                ("update", getattr(self, "thread_update", None)),
+            ]
+            for name, thread in threads:
                 if thread and thread.isRunning():
                     logger.info(f"Aguardando thread de {name} finalizar...")
                     thread.requestInterruption()
-                    if not thread.wait(5000):
-                        logger.warning(f"Thread de {name} não finalizou a tempo, forçando...")
-                        thread.terminate()
-                        thread.wait(1000)
+                    if not thread.wait(10000):
+                        logger.error(
+                            f"Thread de {name} não respondeu a requestInterruption em 10s — "
+                            "verifique se run() está checando isInterruptionRequested()."
+                        )
 
         except Exception as e:
             logger.error(f"Erro ao fechar aplicação: {e}")
