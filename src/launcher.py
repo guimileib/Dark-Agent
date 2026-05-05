@@ -452,9 +452,18 @@ def main() -> None:
 
             if answer == QMessageBox.StandardButton.Yes:
                 if not _install_ffmpeg_with_ui(splash):
-                    logger.error("FFmpeg installation failed or was cancelled.")
-                    splash.close()
-                    sys.exit(1)
+                    # Auto-install failed (no network, antivirus block, etc.).
+                    # Don't kill the app — let the user continue without FFmpeg
+                    # so they can still configure things and try again later.
+                    logger.warning("FFmpeg installation failed; continuing without it.")
+                    QMessageBox.warning(
+                        splash,
+                        "Aviso",
+                        "Não foi possível instalar o FFmpeg automaticamente.\n\n"
+                        "O aplicativo abrirá, mas algumas funcionalidades não\n"
+                        "funcionarão até o FFmpeg ser instalado manualmente em\n"
+                        "https://ffmpeg.org/download.html",
+                    )
             else:
                 QMessageBox.warning(
                     splash,

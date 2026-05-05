@@ -29,10 +29,38 @@ def _get_bundle_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
+def _is_writable(path: Path) -> bool:
+    """Probe whether `path` is writable by creating and deleting a tiny file."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True
+    except (OSError, PermissionError):
+        return False
+
+
 def _get_app_dir() -> Path:
-    """Mutable data root — where the .exe lives (or project root in dev)."""
+    """Mutable data root.
+
+    Frozen mode: prefer the directory containing the .exe (portable behavior),
+    but if it is read-only — e.g. user dropped the .exe inside Program Files
+    or another protected location — fall back to %LOCALAPPDATA%/DarkAgentPro
+    so the app can still write logs, cache, and config without admin elevation.
+    """
     if is_frozen():
-        return Path(sys.executable).resolve().parent
+        exe_dir = Path(sys.executable).resolve().parent
+        if _is_writable(exe_dir):
+            return exe_dir
+        # Fallback: per-user writable location
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if local_appdata:
+            fallback = Path(local_appdata) / "DarkAgentPro"
+        else:
+            fallback = Path.home() / ".darkagent"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
     return Path(__file__).resolve().parent.parent.parent
 
 
