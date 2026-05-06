@@ -81,6 +81,32 @@ class VideoDownloader:
         logger.error("Todas as estratégias falharam!")
         return False, None, "none"
 
+    @staticmethod
+    def _resolve_cookies_file() -> Optional[Path]:
+        """Procura cookies.txt em APP_DIR (ao lado do .exe) e em BUNDLE_DIR/src (dev).
+
+        Não há fallback para --cookies-from-browser: o Chrome 127+ usa
+        App-Bound Encryption e o DPAPI falha em decifrar os cookies de fora
+        do processo do navegador (yt-dlp issue #10927). Usuários que precisam
+        de cookies (ex.: YouTube com idade restrita) devem exportar um
+        cookies.txt e colocá-lo ao lado do executável.
+        """
+        try:
+            from config.paths import APP_DIR, BUNDLE_DIR
+            candidates = [
+                APP_DIR / "cookies.txt",
+                BUNDLE_DIR / "src" / "cookies.txt",
+            ]
+        except Exception:
+            return None
+        for c in candidates:
+            try:
+                if c.exists():
+                    return c
+            except OSError:
+                continue
+        return None
+
     def _run_ytdlp(self, cmd: list, timeout: int) -> Optional[Path]:
         """Helper para rodar yt-dlp com timeout e tratamento de erro"""
         try:
@@ -90,17 +116,9 @@ class VideoDownloader:
             if cmd and cmd[0] == "yt-dlp":
                 cmd = cmd[1:]
 
-            # --- COOKIES SUPPORT ---
-            try:
-                from config.settings import settings
-                if settings.cookies_file.exists():
-                    base_cmd.extend(["--cookies", str(settings.cookies_file)])
-                else:
-                    base_cmd.extend(["--cookies-from-browser", "chrome"])
-            except Exception:
-                from config.paths import COOKIES_FILE
-                if COOKIES_FILE.exists():
-                    base_cmd.extend(["--cookies", str(COOKIES_FILE)])
+            cookies_path = self._resolve_cookies_file()
+            if cookies_path:
+                base_cmd.extend(["--cookies", str(cookies_path)])
 
             full_cmd = base_cmd + cmd
 

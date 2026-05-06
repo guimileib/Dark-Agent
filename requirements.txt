@@ -3,7 +3,9 @@ PyQt6>=6.6.0
 PyQt6-WebEngine>=6.6.0
 
 # Download de Vídeos
-yt-dlp>=2024.1.0
+# yt-dlp recente é importante: extractors quebram com frequência e versões
+# antigas falham em sites que mudaram de API.
+yt-dlp>=2026.1.0
 pytube>=15.0.0
 
 # Processamento de Áudio/Vídeo
