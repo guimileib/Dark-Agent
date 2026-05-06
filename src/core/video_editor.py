@@ -1,11 +1,37 @@
 """Operações de edição de vídeo com FFmpeg"""
 
 import subprocess
+import sys
 import logging
 from pathlib import Path
 from typing import Optional, List
 
 logger = logging.getLogger(__name__)
+
+
+# Posições suportadas pelo marcador permanente (fórmulas FFmpeg)
+_MARCADOR_POS = {
+    "top_left":      ("24",                  "24"),
+    "top_center":    ("(w-text_w)/2",        "24"),
+    "top_right":     ("w-text_w-24",         "24"),
+    "bottom_left":   ("24",                  "h-text_h-24"),
+    "bottom_center": ("(w-text_w)/2",        "h-text_h-24"),
+    "bottom_right":  ("w-text_w-24",         "h-text_h-24"),
+}
+
+
+def _ffmpeg_escape_text(text: str) -> str:
+    """Escapa texto para o filtro drawtext do FFmpeg."""
+    text = text.replace("\\", "\\\\")
+    text = text.replace("'", "\\'")
+    text = text.replace(":", "\\:")
+    text = text.replace("%", "%%")
+    return text
+
+
+def _ffmpeg_escape_path(path: str) -> str:
+    """Converte caminho Windows para o formato aceito por filtros FFmpeg."""
+    return path.replace("\\", "/").replace(":", "\\:")
 
 
 class VideoEditor:
@@ -88,6 +114,90 @@ class VideoEditor:
             logger.error(f"Exceção ao queimar legendas: {e}")
             return False
     
+    def queimar_marcador(
+        self,
+        video_path: Path,
+        texto: str,
+        output_path: Path,
+        posicao: str = "top_right",
+        tamanho_fonte: int = 36,
+        preset: str = "fast",
+    ) -> bool:
+        """Queima um marcador de texto permanente (sempre visível) no vídeo.
+
+        Usado para identificar o vídeo (ex.: "Episódio 5") sem timing —
+        o texto aparece em todos os frames.
+        """
+        if not texto or not texto.strip():
+            logger.warning("Marcador vazio — pulando")
+            return False
+
+        # Resolve fonte (Windows fallback)
+        fonte_candidatos = [
+            "C:/Windows/Fonts/arialbd.ttf",
+            "C:/Windows/Fonts/segoeuib.ttf",
+            "C:/Windows/Fonts/calibrib.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+        ]
+        fonte = next((p for p in fonte_candidatos if Path(p).exists()), None)
+
+        x_expr, y_expr = _MARCADOR_POS.get(posicao, _MARCADOR_POS["top_right"])
+        text_safe = _ffmpeg_escape_text(texto.strip())
+
+        drawtext_parts = [
+            f"text='{text_safe}'",
+            f"fontsize={tamanho_fonte}",
+            "fontcolor=white",
+            "borderw=3",
+            "bordercolor=black",
+            "box=1",
+            "boxcolor=black@0.45",
+            "boxborderw=10",
+            f"x={x_expr}",
+            f"y={y_expr}",
+        ]
+        if fonte:
+            drawtext_parts.insert(1, f"fontfile='{_ffmpeg_escape_path(fonte)}'")
+
+        drawtext = "drawtext=" + ":".join(drawtext_parts)
+
+        cmd = [
+            "ffmpeg",
+            "-i", str(video_path),
+            "-vf", drawtext,
+            "-c:v", "libx264",
+            "-preset", preset,
+            "-crf", "20",
+            "-c:a", "copy",
+            "-y",
+            str(output_path),
+        ]
+
+        sp_kw: dict = {}
+        if sys.platform == "win32":
+            sp_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+        logger.info(f"Queimando marcador '{texto}' em {video_path.name} (pos={posicao})")
+        try:
+            resultado = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=3600,
+                stdin=subprocess.DEVNULL, **sp_kw,
+            )
+            if resultado.returncode == 0 and output_path.exists():
+                logger.info(f"Marcador queimado com sucesso: {output_path.name}")
+                return True
+            logger.error(
+                f"FFmpeg drawtext falhou (rc={resultado.returncode}): "
+                f"{resultado.stderr[-500:] if resultado.stderr else ''}"
+            )
+            return False
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout ao queimar marcador")
+            return False
+        except Exception as exc:
+            logger.error(f"Exceção ao queimar marcador: {exc}")
+            return False
+
     def adicionar_logo(
         self,
         video_path: Path,

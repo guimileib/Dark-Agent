@@ -1,10 +1,11 @@
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton,
-    QProgressBar, QLabel, QMessageBox, QTabWidget
+    QProgressBar, QLabel, QMessageBox, QTabWidget, QApplication
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon
@@ -20,59 +21,72 @@ from core import (
 logger = logging.getLogger(__name__)
 
 
+# ─── Auto-update via GitHub Releases ──────────────────────────────────────
+GITHUB_REPO = "guimileib/Dark-Agent"
+RELEASE_ASSET_NAME = "DarkAgentLauncher.exe"
+
+
+def _parse_version(v: str) -> tuple:
+    """Extrai tupla numérica de uma versão tipo 'v2.0.1' ou '2.0.1-rc1'."""
+    nums = re.findall(r"\d+", v or "")
+    return tuple(int(x) for x in nums) if nums else (0,)
+
+
+def _is_newer(remote: str, local: str) -> bool:
+    try:
+        return _parse_version(remote) > _parse_version(local)
+    except Exception:
+        return False
+
+
 class UpdateCheckerThread(QThread):
-    """Thread para verificar atualizações no repositório GitHub via git sem travar a UI"""
-    
-    update_available = pyqtSignal(str, str)  # hash_local, hash_remoto
-    
+    """Consulta a GitHub Releases API e sinaliza se há um release mais novo."""
+
+    # tag_name (sem 'v'), URL do .exe, corpo do release
+    update_available = pyqtSignal(str, str, str)
+
     def run(self):
         try:
-            import subprocess
-            import sys
+            import requests
+            from src import __version__
 
-            base_dir = APP_DIR
-            _sp_kw = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
-
-            # Pegar branch atual
-            out_branch = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=base_dir, capture_output=True, text=True, check=True, **_sp_kw
-            )
-            current_branch = out_branch.stdout.strip()
-            if not current_branch:
-                current_branch = "main"
-
-            # Pegar hash local
-            out_local = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=base_dir, capture_output=True, text=True, check=True, **_sp_kw
-            )
-            hash_local = out_local.stdout.strip()
-
-            # Pegar hash remoto da branch atual
-            out_remote = subprocess.run(
-                ["git", "ls-remote", "origin", current_branch],
-                cwd=base_dir, capture_output=True, text=True, check=True, **_sp_kw
+            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            resp = requests.get(
+                api_url,
+                timeout=10,
+                headers={"Accept": "application/vnd.github+json"},
             )
 
-            if not out_remote.stdout:
+            if resp.status_code == 404:
+                logger.debug("Nenhum release publicado ainda no repositório.")
+                return
+            resp.raise_for_status()
+
+            data = resp.json()
+            tag_raw = (data.get("tag_name") or "").strip()
+            tag = tag_raw.lstrip("v").strip()
+            if not tag:
                 return
 
-            hash_remoto = out_remote.stdout.split()[0].strip()
+            if not _is_newer(tag, __version__):
+                logger.debug(f"Versão atual ({__version__}) >= release mais recente ({tag}).")
+                return
 
-            if hash_remoto and hash_local != hash_remoto:
-                # Verificar se já temos esse commit localmente (estamos apenas 'ahead' e não 'behind')
-                check_local = subprocess.run(
-                    ["git", "cat-file", "-e", hash_remoto],
-                    cwd=base_dir, capture_output=True, **_sp_kw
-                )
-                
-                # returncode != 0 significa que não temos esse commit no repo local -> é uma atualização real
-                if check_local.returncode != 0:
-                    self.update_available.emit(hash_local, hash_remoto)
-                
+            asset = next(
+                (a for a in data.get("assets", []) if a.get("name") == RELEASE_ASSET_NAME),
+                None,
+            )
+            if not asset or not asset.get("browser_download_url"):
+                logger.warning(f"Release {tag_raw} sem asset '{RELEASE_ASSET_NAME}'.")
+                return
+
+            self.update_available.emit(
+                tag,
+                asset["browser_download_url"],
+                data.get("body") or "",
+            )
         except Exception as e:
-            logger.debug(f"Aviso - Não foi possível conferir atualizações via Git: {e}")
+            logger.debug(f"Aviso - Não foi possível verificar atualizações: {e}")
 
 
 class PreviewGeneratorThread(QThread):
@@ -242,6 +256,30 @@ class ProcessadorThread(QThread):
                         resultados["falha"].append((url, "Falha ao renderizar"))
                         continue
 
+                    # Aplicar marcador permanente, se solicitado
+                    marker = self.config.get("marker")
+                    if marker:
+                        report_progress("Aplicando marcador...", 95)
+                        marked_path = output_path.parent / f"{output_path.stem}_marked.mp4"
+                        if editor.queimar_marcador(
+                            video_path=output_path,
+                            texto=marker["text"],
+                            output_path=marked_path,
+                            posicao=marker.get("position", "top_right"),
+                        ) and marked_path.exists():
+                            try:
+                                output_path.unlink()
+                                marked_path.rename(output_path)
+                            except OSError as e:
+                                logger.warning(
+                                    f"Não foi possível substituir final.mp4 ({e}); usando _marked.mp4"
+                                )
+                                output_path = marked_path
+                        else:
+                            logger.warning(
+                                f"Marcador falhou para {url}, mantendo vídeo sem marcador"
+                            )
+
                     resultados["sucesso"].append((url, output_path))
                     report_progress("Concluído!", 100)
 
@@ -269,47 +307,84 @@ class BatchDownloadThread(QThread):
     """Thread para download de múltiplos vídeos"""
     progresso = pyqtSignal(str, int)  # mensagem, percentual
     concluido = pyqtSignal(dict)  # resultados {sucesso: [], falha: []}
-    
+
     def __init__(self, config):
         super().__init__()
         self.config = config
-    
+
     def run(self):
         urls = self.config.get("urls", [])
         total = len(urls)
+        marker = self.config.get("marker")  # {"text": str, "position": str} ou None
         resultados = {"sucesso": [], "falha": []}
-        
+
         try:
             for i, url in enumerate(urls):
                 if not url.strip():
                     continue
-                    
+
                 self.progresso.emit(f"Baixando {i+1}/{total}: {url}...", int((i / total) * 100))
-                
+
                 downloader = VideoDownloader(self.config["pasta"])
                 try:
                     sucesso, caminho, estrategia = downloader.download(
                         url,
                         self.config["qualidade"]
                     )
-                    
+
                     if sucesso:
+                        # Aplicar marcador permanente, se solicitado
+                        if marker and caminho:
+                            self.progresso.emit(
+                                f"Aplicando marcador no vídeo {i+1}/{total}...",
+                                int(((i + 0.5) / total) * 100),
+                            )
+                            caminho_final = self._aplicar_marcador(Path(caminho), marker)
+                            if caminho_final:
+                                caminho = caminho_final
+                            else:
+                                logger.warning(
+                                    f"Marcador falhou para {url}, mantendo vídeo sem marcador"
+                                )
+
                         resultados["sucesso"].append((url, caminho))
                         logger.info(f"Download sucesso: {url}")
                     else:
                         resultados["falha"].append((url, "Todas as estratégias falharam"))
                         logger.warning(f"Download falha: {url}")
-                        
+
                 except Exception as e:
                     resultados["falha"].append((url, str(e)))
                     logger.error(f"Erro no download de {url}: {e}")
-            
+
             self.progresso.emit("Finalizando...", 100)
             self.concluido.emit(resultados)
-                
+
         except Exception as e:
             logger.error(f"Erro na thread de batch: {e}")
             self.concluido.emit(resultados)
+
+    @staticmethod
+    def _aplicar_marcador(video_path: Path, marker: dict) -> Optional[Path]:
+        """Queima o marcador no vídeo, substituindo o original. Retorna o novo caminho ou None."""
+        editor = VideoEditor()
+        out_path = video_path.parent / f"{video_path.stem}_marked.mp4"
+        ok = editor.queimar_marcador(
+            video_path=video_path,
+            texto=marker["text"],
+            output_path=out_path,
+            posicao=marker.get("position", "top_right"),
+        )
+        if not ok or not out_path.exists():
+            return None
+        # Substitui o original
+        try:
+            video_path.unlink()
+            out_path.rename(video_path)
+            return video_path
+        except OSError as e:
+            logger.warning(f"Não foi possível substituir o original ({e}); mantendo {out_path}")
+            return out_path
 
 
 class MainWindow(QMainWindow):
@@ -358,56 +433,131 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.warning(f"Erro ao iniciar verificador de atualizacoes: {e}")
 
-    def on_update_available(self, local_hash, remote_hash):
-        """Mostra janela quando atualização for encontrada"""
+    def on_update_available(self, tag: str, download_url: str, release_notes: str):
+        """Mostra janela quando atualização for encontrada (via GitHub Releases)."""
+        from src import __version__
+
+        # Trunca release notes longas para caber no diálogo
+        notes_preview = (release_notes or "").strip()
+        if len(notes_preview) > 600:
+            notes_preview = notes_preview[:600].rstrip() + "\n…"
+
         msg = (
-            "🚀 Uma nova atualização está disponível no repositório GitHub!\n\n"
-            "Deseja baixar e aplicar a atualização agora usando git pull?"
+            f"🚀 Nova versão disponível: v{tag} (atual: v{__version__}).\n\n"
+            "Deseja baixar e aplicar agora? O aplicativo será reiniciado automaticamente."
         )
+        if notes_preview:
+            msg += f"\n\nNotas da versão:\n{notes_preview}"
+
         resposta = QMessageBox.question(
             self,
             "Atualização Disponível",
             msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
+
         if resposta == QMessageBox.StandardButton.Yes:
-            self.aplicar_atualizacao()
+            self.aplicar_atualizacao(tag, download_url)
 
-    def aplicar_atualizacao(self):
-        """Usa git pull para atualizar o repositório"""
-        try:
-            import subprocess
-            import sys
+    def aplicar_atualizacao(self, tag: str, download_url: str):
+        """Baixa o novo .exe da Release e usa um helper .bat para substituir e relançar.
 
-            base_dir = APP_DIR
-            self.status_label.setText("Baixando atualização do repositório...")
-            self.repaint() # Força a interface a atualizar o label
-
-            _sp_kw = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
-
-            proc = subprocess.run(
-                ["git", "pull"],
-                cwd=base_dir, capture_output=True, text=True, **_sp_kw
+        Em modo dev (rodando do código-fonte), apenas informa o usuário —
+        o auto-update binário só faz sentido para o .exe distribuído.
+        """
+        if not getattr(sys, "frozen", False):
+            QMessageBox.information(
+                self,
+                "Modo Desenvolvimento",
+                f"Update v{tag} disponível, mas você está rodando a partir do código-fonte.\n\n"
+                "Use 'git pull' nesta pasta para atualizar."
             )
-            
-            if proc.returncode == 0:
-                QMessageBox.information(
-                    self, 
-                    "Sucesso ✨", 
-                    "A atualização foi baixada e aplicada com sucesso!\n\n"
-                    "Por favor, feche e abra o aplicativo novamente para carregar as modificações."
-                )
-            else:
-                QMessageBox.warning(
-                    self, 
-                    "Erro ao Atualizar", 
-                    f"Ocorreu um erro ao tentar executar o git pull:\n{proc.stderr}"
-                )
+            return
+
+        if sys.platform != "win32":
+            QMessageBox.warning(
+                self,
+                "Plataforma não suportada",
+                "Auto-update binário só está disponível no Windows."
+            )
+            return
+
+        try:
+            import requests
+            import subprocess
+
+            self.status_label.setText(f"Baixando atualização v{tag}...")
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+            QApplication.processEvents()
+
+            update_dir = APP_DIR / "update"
+            update_dir.mkdir(parents=True, exist_ok=True)
+            new_exe = update_dir / "DarkAgentLauncher_new.exe"
+
+            # Limpa download parcial anterior, se houver
+            try:
+                new_exe.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+            with requests.get(download_url, stream=True, timeout=60) as r:
+                r.raise_for_status()
+                total = int(r.headers.get("content-length", 0))
+                downloaded = 0
+                with open(new_exe, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=128 * 1024):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0:
+                            pct = int(downloaded / total * 100)
+                            self.progress_bar.setValue(pct)
+                            QApplication.processEvents()
+
+            current_exe = Path(sys.executable).resolve()
+            bat_path = update_dir / "apply_update.bat"
+
+            # Helper .bat: aguarda o processo atual liberar o arquivo (retry no move),
+            # substitui o binário, relança e auto-deleta.
+            bat_content = (
+                "@echo off\r\n"
+                "ping 127.0.0.1 -n 3 >NUL\r\n"
+                ":retry\r\n"
+                f'move /Y "{new_exe}" "{current_exe}"\r\n'
+                "if errorlevel 1 (\r\n"
+                "    ping 127.0.0.1 -n 2 >NUL\r\n"
+                "    goto retry\r\n"
+                ")\r\n"
+                f'start "" "{current_exe}"\r\n'
+                'del "%~f0"\r\n'
+            )
+            bat_path.write_text(bat_content, encoding="ascii")
+
+            # DETACHED_PROCESS faz o .bat sobreviver ao fechamento do app.
+            DETACHED = 0x00000008  # subprocess.DETACHED_PROCESS (Windows-only)
+            subprocess.Popen(
+                ["cmd", "/c", str(bat_path)],
+                creationflags=DETACHED | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+
+            self.status_label.setText("Reiniciando para aplicar atualização...")
+            QApplication.processEvents()
+            QApplication.quit()
         except Exception as e:
-            QMessageBox.critical(self, "Erro ❌", f"Erro fatal ao tentar atualizar: {e}")
-        finally:
+            logger.error(f"Erro ao aplicar atualização: {e}", exc_info=True)
             self.status_label.setText("")
+            self.progress_bar.setVisible(False)
+            QMessageBox.critical(
+                self,
+                "Erro ao Atualizar",
+                f"Falha ao baixar/aplicar a atualização:\n{e}"
+            )
 
     def show_centered_message(self, title, message, icon=QMessageBox.Icon.Information):
         """Mostra uma mensagem centralizada na janela"""
@@ -792,6 +942,7 @@ class MainWindow(QMainWindow):
             "urls": urls,
             "qualidade": qualidade,
             "pasta": pasta,
+            "marker": self.download_widget.get_marker(),
         }
 
         # Desabilitar botões
@@ -844,11 +995,12 @@ class MainWindow(QMainWindow):
         if not urls:
             self.show_centered_message("Aviso", "Por favor, insira pelo menos uma URL válida!", QMessageBox.Icon.Warning)
             return
-            
+
         config = {
             "urls": urls,
             "qualidade": qualidade,
-            "pasta": pasta
+            "pasta": pasta,
+            "marker": self.download_widget.get_marker(),
         }
         
         # Desabilitar UI
