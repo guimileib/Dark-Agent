@@ -97,8 +97,9 @@ src/config/config.json
 config/config.json
 config/estilos_padrao.json
 
-# Cookies e contas (dados de sessão)
+# Cookies e contas (dados de sessão) — NUNCA commitar
 cookies.txt
+cookies__*.txt
 accounts/
 
 # Logs
@@ -106,3 +107,6 @@ logs/
 
 # Arquivo nul (Windows artifact)
 nul
+
+# docs
+CLAUDE.md

@@ -1,5 +1,6 @@
 import logging
 import subprocess
+import sys
 import json
 import numpy as np
 from pathlib import Path
@@ -7,6 +8,12 @@ from typing import List, Dict, Optional
 import tempfile
 
 logger = logging.getLogger(__name__)
+
+# POSIX-safe: creationflags só existe no Windows. Passar o kwarg direto
+# crasha em Python 3.12+ no Linux/macOS, então expandimos via **_SP_KW.
+_SP_KW: dict = {}
+if sys.platform == "win32":
+    _SP_KW["creationflags"] = subprocess.CREATE_NO_WINDOW
 
 
 class ClipAnalyzer:
@@ -28,8 +35,8 @@ class ClipAnalyzer:
                 str(self.video_path)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            
+            result = subprocess.run(cmd, capture_output=True, text=True, **_SP_KW)
+
             if result.returncode == 0:
                 data = json.loads(result.stdout)
                 return float(data['format']['duration'])
@@ -52,8 +59,8 @@ class ClipAnalyzer:
                 str(self.video_path)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            
+            result = subprocess.run(cmd, capture_output=True, text=True, **_SP_KW)
+
             if result.returncode == 0:
                 data = json.loads(result.stdout)
                 rate_str = data['streams'][0]['r_frame_rate']
@@ -140,9 +147,9 @@ class ClipAnalyzer:
                 capture_output=True,
                 text=True,
                 timeout=60,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                **_SP_KW
             )
-            
+
             # Parsear output para encontrar timestamps
             mudancas = []
             for line in result.stderr.split('\n'):
@@ -150,7 +157,7 @@ class ClipAnalyzer:
                     try:
                         time_str = line.split('pts_time:')[1].split()[0]
                         mudancas.append(float(time_str))
-                    except:
+                    except (ValueError, IndexError):
                         continue
             
             return mudancas
@@ -165,23 +172,9 @@ class ClipAnalyzer:
         Analisa movimento no vídeo por segundo
         Retorna dict {segundo: score_movimento}
         """
-        try:
-            # Simplificado: usar blackdetect como proxy de baixo movimento
-            # Em produção, usar análise de fluxo óptico
-            movimento = {}
-            
-            # Estimar movimento baseado em mudanças de cena
-            # Mais mudanças = mais movimento
-            for i in range(int(self.duracao_total)):
-                # Score aleatório baseado em heurística
-                # Em produção, usar análise real
-                movimento[i] = np.random.uniform(0.3, 0.9)
-            
-            return movimento
-            
-        except Exception as e:
-            logger.warning(f"Erro ao analisar movimento: {e}")
-            return {i: 0.5 for i in range(int(self.duracao_total))}
+        # Placeholder determinístico até análise real (optical flow) ser implementada.
+        # Retornar 0.5 fixo evita scores aleatórios que mudam a cada clique.
+        return {i: 0.5 for i in range(int(self.duracao_total))}
     
     def _analisar_audio(self) -> Dict[int, float]:
         """
@@ -203,28 +196,23 @@ class ClipAnalyzer:
                 capture_output=True,
                 text=True,
                 timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                **_SP_KW
             )
-            
+
             # Parsear volume médio
             mean_volume = -20.0  # Default
             for line in result.stderr.split('\n'):
                 if 'mean_volume:' in line:
                     try:
                         mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
-            
-            # Normalizar volume para score 0-1
-            # -60dB = silêncio (0.0), -10dB = alto (1.0)
-            energia = {}
-            for i in range(int(self.duracao_total)):
-                # Estimar energia (em produção, analisar por segundo)
-                volume_estimado = mean_volume + np.random.uniform(-10, 10)
-                score = np.clip((volume_estimado + 60) / 50, 0, 1)
-                energia[i] = score
-            
-            return energia
+
+            # Normalizar volume médio do vídeo inteiro em score 0-1 (-60dB -> 0, -10dB -> 1).
+            # Todos os segundos recebem o mesmo score: é impreciso, mas determinístico.
+            # Para análise por-segundo real, usar astats com janela deslizante.
+            score_global = float(np.clip((mean_volume + 60) / 50, 0, 1))
+            return {i: score_global for i in range(int(self.duracao_total))}
             
         except Exception as e:
             logger.warning(f"Erro ao analisar áudio: {e}")
@@ -425,7 +413,7 @@ class ClipAnalyzer:
                 capture_output=True,
                 text=True,
                 timeout=120,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                **_SP_KW
             )
             
             if result.returncode == 0 and output_path.exists():

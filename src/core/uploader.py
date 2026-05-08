@@ -19,8 +19,14 @@ import os
 import random
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+# POSIX-safe: CREATE_NO_WINDOW só existe em Windows.
+_SP_KW: dict = {}
+if sys.platform == "win32":
+    _SP_KW["creationflags"] = subprocess.CREATE_NO_WINDOW
 
 # Standard Selenium (used for Firefox / Edge)
 from selenium.webdriver.edge.options import Options as EdgeOptions
@@ -198,7 +204,7 @@ def _brave_major_version(brave_path: str) -> str | None:
     """Return the major version number string of the Brave binary."""
     try:
         out = subprocess.check_output(
-            [brave_path, "--version"], stderr=subprocess.DEVNULL
+            [brave_path, "--version"], stderr=subprocess.DEVNULL, **_SP_KW
         ).decode().strip()
         m = re.search(r"(\d+)\.\d+\.\d+\.\d+", out)
         if m:

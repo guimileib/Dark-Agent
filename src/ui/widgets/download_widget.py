@@ -224,6 +224,51 @@ class DownloadWidget(QWidget):
 
         container_layout.addLayout(grid_config)
 
+        # ── Marcador permanente (opcional) ───────────────────────────────
+        marker_label = QLabel("Marcador no Vídeo (Opcional)")
+        marker_label.setObjectName("SectionTitle")
+        container_layout.addWidget(marker_label)
+
+        marker_subtitle = QLabel(
+            "Texto fixo queimado no vídeo (ex.: \"Episódio 5\"). Deixe vazio para não usar."
+        )
+        marker_subtitle.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 4px;")
+        container_layout.addWidget(marker_subtitle)
+
+        marker_row = QHBoxLayout()
+        marker_row.setSpacing(8)
+
+        self.marker_entry = QLineEdit()
+        self.marker_entry.setPlaceholderText("Ex.: Episódio 1")
+        self.marker_entry.setMinimumHeight(42)
+        self.marker_entry.setStyleSheet("""
+            QLineEdit {
+                background-color: rgba(15, 23, 42, 0.8);
+                color: white;
+                border: 1px solid rgba(59, 130, 246, 0.4);
+                border-radius: 10px;
+                padding: 0 14px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3b82f6;
+                background-color: rgba(15, 23, 42, 0.95);
+            }
+        """)
+        marker_row.addWidget(self.marker_entry, 2)
+
+        self.marker_pos_combo = QComboBox()
+        self.marker_pos_combo.addItem("Topo Direita",     "top_right")
+        self.marker_pos_combo.addItem("Topo Centro",      "top_center")
+        self.marker_pos_combo.addItem("Topo Esquerda",    "top_left")
+        self.marker_pos_combo.addItem("Embaixo Direita",  "bottom_right")
+        self.marker_pos_combo.addItem("Embaixo Centro",   "bottom_center")
+        self.marker_pos_combo.addItem("Embaixo Esquerda", "bottom_left")
+        self.marker_pos_combo.setMinimumHeight(42)
+        marker_row.addWidget(self.marker_pos_combo, 1)
+
+        container_layout.addLayout(marker_row)
+
         # ── Botões de ação ────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
@@ -396,11 +441,22 @@ class DownloadWidget(QWidget):
     # ------------------------------------------------------------------
 
     def get_configuracao(self) -> dict:
-        """Retorna configuração atual (URLs checadas + qualidade + pasta)"""
+        """Retorna configuração atual (URLs checadas + qualidade + pasta + marcador)"""
         return {
             "urls": self._get_checked_urls(),
             "qualidade": self.qualidade_combo.currentText(),
             "pasta": Path(self.pasta_label.text()),
+            "marker": self.get_marker(),
+        }
+
+    def get_marker(self) -> dict | None:
+        """Retorna {"text": str, "position": str} se o marcador foi preenchido, senão None."""
+        text = self.marker_entry.text().strip()
+        if not text:
+            return None
+        return {
+            "text": text,
+            "position": self.marker_pos_combo.currentData() or "top_right",
         }
 
     def set_urls(self, urls: list[str]):

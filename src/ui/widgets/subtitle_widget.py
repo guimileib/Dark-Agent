@@ -21,29 +21,38 @@ logger = logging.getLogger(__name__)
 
 class SinglePreviewGeneratorThread(QThread):
     """Thread para gerar um único preview sob demanda"""
-    
+
     preview_ready = pyqtSignal(str)  # caminho
-    
-    def __init__(self, renderer, estilo, tamanho, force=False):
+
+    def __init__(self, renderer, estilo, tamanho, force=False, posicao="Embaixo"):
         super().__init__()
         self.renderer = renderer
         self.estilo = estilo
         self.tamanho = tamanho
         self.force = force
-        
+        self.posicao = posicao
+        # Flag para descartar o resultado se a thread ficou obsoleta (o usuário
+        # trocou de estilo antes dela terminar). Evita chamar terminate(), que
+        # mataria um Pillow render no meio e poderia deixar arquivo .png corrompido.
+        self._discarded = False
+
+    def discard(self):
+        """Marca a thread como obsoleta — o resultado será ignorado."""
+        self._discarded = True
+
     def run(self):
         try:
-            # Clonar estilo para não afetar o original durante renderização
             import copy
             estilo_clone = copy.deepcopy(self.estilo)
-            
+
             path = self.renderer.gerar_preview(
-                estilo_clone, 
-                tamanho=self.tamanho, 
-                force=self.force
+                estilo_clone,
+                tamanho=self.tamanho,
+                force=self.force,
+                posicao=self.posicao,
             )
-            
-            if path:
+
+            if path and not self._discarded:
                 self.preview_ready.emit(str(path))
         except Exception as e:
             logger.error(f"Erro na thread de preview: {e}")
@@ -454,6 +463,9 @@ class SubtitleWidget(QWidget):
             }
         """)
         self.posicao_combo.addItems(["Embaixo", "Centro", "Topo"])
+        self.posicao_combo.currentTextChanged.connect(
+            lambda _: self.atualizar_preview(force=True)
+        )
         config_layout.addWidget(self.posicao_combo)
 
         # Cor do Texto
@@ -587,8 +599,12 @@ class SubtitleWidget(QWidget):
     
     def carregar_previews_existentes(self):
         """Carrega previews já existentes no disco"""
-        preview_dir = settings.assets_dir / "previews"
-        
+        try:
+            from config.paths import CACHE_DIR
+        except ImportError:
+            from ...config.paths import CACHE_DIR
+        preview_dir = CACHE_DIR / "previews"
+
         if not preview_dir.exists():
             logger.info("Diretório de previews não existe ainda")
             return
@@ -627,7 +643,8 @@ class SubtitleWidget(QWidget):
     @staticmethod
     def _criar_icone_estilo(cor_hex: str, cor_borda_hex: str = "#000000",
                             tem_borda: bool = True) -> QIcon:
-        """Generates a styled 'Aa' preview icon using QPainter."""
+        """Gera o ícone 'Aa' dos cards de estilo — visual minimalista
+        (letra branca + accent azul padrão do app)."""
         w, h = 90, 38
         pixmap = QPixmap(w, h)
         pixmap.fill(QColor(0, 0, 0, 0))
@@ -635,45 +652,41 @@ class SubtitleWidget(QWidget):
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        cor = QColor(cor_hex)
+        accent_color = QColor("#3b82f6")     # azul padrão do app
+        text_color = QColor("#f8fafc")       # branco quase puro
+        border_color = QColor("#0f172a")     # slate-900 para outline sutil
 
-        # ── Background pill with subtle gradient ──
-        grad = QLinearGradient(0, 0, w, 0)
-        bg = QColor(cor)
-        bg.setAlpha(25)
-        bg2 = QColor(cor)
-        bg2.setAlpha(12)
-        grad.setColorAt(0.0, bg)
-        grad.setColorAt(1.0, bg2)
+        # ── Pill de fundo (slate translúcido uniforme) ──
+        bg = QColor("#1e293b")
+        bg.setAlpha(60)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(grad))
+        painter.setBrush(QBrush(bg))
         painter.drawRoundedRect(0, 0, w, h, 10, 10)
 
-        # ── Colored accent bar on left ──
-        accent = QColor(cor)
-        accent.setAlpha(200)
-        painter.setBrush(QBrush(accent))
+        # ── Barra de accent azul à esquerda ──
+        painter.setBrush(QBrush(accent_color))
         painter.drawRoundedRect(0, 6, 4, h - 12, 2, 2)
 
-        # ── "Aa" text with optional border/shadow ──
+        # ── "Aa" texto branco minimalista ──
         font = QFont("Segoe UI", 17, QFont.Weight.ExtraBold)
         painter.setFont(font)
 
-        if tem_borda:
-            # Text outline (simulated by drawing behind in border color)
-            outline = QColor(cor_borda_hex)
-            outline.setAlpha(180)
-            painter.setPen(QPen(outline))
-            for dx, dy in [(-1, -1), (-1, 1), (1, -1), (1, 1), (0, -1), (0, 1)]:
-                painter.drawText(pixmap.rect().adjusted(12 + dx, dy, dx, dy),
-                                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                                 "Aa")
+        # Outline fino em slate escuro p/ garantir legibilidade sobre
+        # qualquer fundo sem poluir o visual.
+        painter.setPen(QPen(border_color))
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            painter.drawText(
+                pixmap.rect().adjusted(12 + dx, dy, dx, dy),
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                "Aa",
+            )
 
-        # Main text
-        painter.setPen(QPen(cor))
-        painter.drawText(pixmap.rect().adjusted(12, 0, 0, 0),
-                         Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                         "Aa")
+        painter.setPen(QPen(text_color))
+        painter.drawText(
+            pixmap.rect().adjusted(12, 0, 0, 0),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            "Aa",
+        )
 
         painter.end()
         return QIcon(pixmap)
@@ -749,16 +762,25 @@ class SubtitleWidget(QWidget):
             self.tamanho_combo.blockSignals(True)
             self.tamanho_combo.clear()
             self.tamanho_combo.addItems([str(s) for s in estilo.size_options])
-            
-            # Tentar selecionar o tamanho atual do estilo
-            tamanho_str = str(estilo.tamanho)
-            index = self.tamanho_combo.findText(tamanho_str)
+
+            # Default: 18 se disponível; senão mais próximo de 18; senão
+            # cai no tamanho do estilo.
+            preferido = 18
+            if preferido in estilo.size_options:
+                estilo.tamanho = preferido
+            index = self.tamanho_combo.findText(str(estilo.tamanho))
             if index >= 0:
                 self.tamanho_combo.setCurrentIndex(index)
             else:
-                # Se não encontrar exato, seleciona o mais próximo ou o padrão
-                self.tamanho_combo.setCurrentIndex(self.tamanho_combo.count() - 1)
-                
+                # Selecionar o mais próximo de 18
+                candidato = min(
+                    estilo.size_options, key=lambda s: abs(s - preferido)
+                )
+                estilo.tamanho = candidato
+                self.tamanho_combo.setCurrentIndex(
+                    self.tamanho_combo.findText(str(candidato))
+                )
+
             self.tamanho_combo.blockSignals(False)
             
         # Atualizar visual do botão de cor
@@ -827,7 +849,6 @@ class SubtitleWidget(QWidget):
     def atualizar_tamanho(self, texto):
         """Atualiza o tamanho do estilo atual quando o combo muda"""
         if self.estilo_atual and texto.isdigit():
-            self.estilo_atual.tamanho = int(texto)
             self.estilo_atual.tamanho = int(texto)
             self.atualizar_preview()
 
@@ -924,65 +945,36 @@ class SubtitleWidget(QWidget):
         if not self.estilo_atual:
             self.preview_canvas.setText("Selecione um estilo de legenda")
             return
-        
-        # Verificar cache de previews para este estilo
+
         estilo_id = self.estilo_atual.id
         tamanho = self.estilo_atual.tamanho
-        
-        # Incluir cor no cache key se necessário, mas por enquanto usamos o path do arquivo
-        # Sanitizar cor para busca no cache
-        cor_safe = self.estilo_atual.cor_primaria.replace("&H", "").replace("&", "")
-        
-        # Se force=True, ignorar cache e regenerar
-        if force:
-            caminho_preview = None
-        else:
-            # Tentar encontrar preview exato para o tamanho e cor
-            caminho_preview = None
-        
-        if estilo_id in self.previews_cache:
-            # Primeiro, tentar tamanho exato
-            if tamanho in self.previews_cache[estilo_id]:
-                # Verificar se o caminho contém a cor atual (se implementado no cache)
-                # Como o cache atual é simples {tamanho: path}, precisamos verificar o nome do arquivo
-                path_cache = self.previews_cache[estilo_id][tamanho]
-                if cor_safe in Path(path_cache).name:
-                    caminho_preview = path_cache
-                    logger.debug(f"Preview encontrado: {estilo_id} tamanho {tamanho} cor {cor_safe}")
-                else:
-                    # Cor diferente, ignorar cache
-                    caminho_preview = None
-            else:
-                # Procurar tamanho mais próximo
-                tamanhos_disponiveis = sorted(self.previews_cache[estilo_id].keys())
-                if tamanhos_disponiveis:
-                    # Encontrar o mais próximo
-                    tamanho_proximo = min(tamanhos_disponiveis, key=lambda x: abs(x - tamanho))
-                    caminho_preview = self.previews_cache[estilo_id][tamanho_proximo]
-                    logger.debug(f"Usando preview próximo: {estilo_id} tamanho {tamanho_proximo}")
-        
-        # Carregar e exibir preview
-        if caminho_preview and Path(caminho_preview).exists():
-            pixmap = QPixmap(caminho_preview)
-            if not pixmap.isNull():
-                self._exibir_pixmap(pixmap)
-                logger.debug(f"Preview exibido: {caminho_preview}")
-                return
+        posicao = self.posicao_combo.currentText() if hasattr(self, "posicao_combo") else "Embaixo"
 
-        # Fallback: gerar preview sob demanda (ASYNC)
+        # Cache in-memory: como agora consideramos posição + cor, o cache
+        # simples por (estilo, tamanho) não é mais confiável para hits. Geramos
+        # pelo renderer (que tem seu próprio cache em disco por filename).
         if self.preview_renderer:
-            logger.info(f"Iniciando geração de preview async para {estilo_id} tamanho {tamanho}")
+            logger.debug(
+                f"Preview async: {estilo_id} tamanho {tamanho} posição {posicao}"
+            )
             self.preview_canvas.setText("⏳ Gerando preview...")
 
+            # Thread anterior: descartar o resultado (deixa terminar naturalmente).
+            # terminate() interrompia um Pillow render no meio e potencialmente deixava
+            # PNG corrompido no cache. O render é rápido (<1s), então só ignoramos a saída.
             if self.preview_thread and self.preview_thread.isRunning():
-                self.preview_thread.terminate()
-                self.preview_thread.wait()
+                self.preview_thread.discard()
+                try:
+                    self.preview_thread.preview_ready.disconnect(self._on_preview_ready)
+                except (TypeError, RuntimeError):
+                    pass
 
             self.preview_thread = SinglePreviewGeneratorThread(
                 self.preview_renderer,
                 self.estilo_atual,
                 tamanho,
-                force=force
+                force=force,
+                posicao=posicao,
             )
             self.preview_thread.preview_ready.connect(self._on_preview_ready)
             self.preview_thread.start()

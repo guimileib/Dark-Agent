@@ -1,9 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-datas = [('src/assets', 'src/assets'), ('src/config', 'src/config')]
+datas = [
+    ('src/assets', 'src/assets'),
+    ('src/config/estilos_padrao.json', 'src/config'),
+    ('src/config/config.json', 'src/config'),
+    ('src/__init__.py', 'src'),
+]
 binaries = []
-hiddenimports = ['PIL', 'PyQt6']
+hiddenimports = [
+    'PIL',
+    'PyQt6',
+    'PyQt6.QtSvg',
+    'PyQt6.QtSvgWidgets',
+    'main',
+    'torch_fix',
+]
+
+# Garantir que todos os subpacotes de src/ entrem no bundle, mesmo que sejam
+# carregados via import dinâmico/deferido.
+for _pkg in ('config', 'models', 'ui', 'utils', 'core'):
+    hiddenimports += collect_submodules(_pkg)
+
 tmp_ret = collect_all('whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('torch')
@@ -25,12 +43,6 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-# NOTE: Use .ico for Windows executable icon. Convert icon.png to icon.ico
-# with: magick convert src/assets/icon.png -define icon:auto-resize=256,128,64,48,32,16 src/assets/icon.ico
-# If icon.ico does not exist, PyInstaller will skip it gracefully.
-import os
-icon_file = 'src\\assets\\icon.ico' if os.path.exists('src\\assets\\icon.ico') else []
-
 exe = EXE(
     pyz,
     a.scripts,
@@ -50,5 +62,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=icon_file,
+    icon=['src\\assets\\icon.png'],
 )

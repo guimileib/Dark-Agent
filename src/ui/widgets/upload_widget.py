@@ -10,9 +10,10 @@ from pathlib import Path
 from PyQt6.QtCore import (
     Qt, QDate, QThread, QTimer, pyqtSignal, QSize,
 )
-from PyQt6.QtGui import QColor, QFont, QWheelEvent
+from PyQt6.QtGui import QBrush, QColor, QFont, QTextCharFormat, QWheelEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCalendarWidget, QComboBox,
+    QDialog, QDialogButtonBox,
     QFileDialog, QFrame, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
     QPushButton, QRadioButton, QScrollArea, QSizePolicy,
@@ -327,50 +328,22 @@ class InlineDateTimePicker(QWidget):
                 width: 22px; border: none;
             }
         """)
+        self._style_calendar_popup(self._date_edit.calendarWidget())
         date_card.addWidget(self._date_edit)
         row.addWidget(date_frame)
         row.addStretch()
 
         layout.addLayout(row)
 
-        # ── Favorite times row — pill buttons ────────────────────────
-        fav_row = QHBoxLayout()
-        fav_row.setSpacing(6)
-        lbl_fav = QLabel("Atalhos:")
-        lbl_fav.setStyleSheet(
-            "color: #475569; font-size: 11px; font-weight: 600;"
-            " background: transparent; border: none;"
-        )
-        fav_row.addWidget(lbl_fav)
+        # ── Favorite times row — pill buttons + pencil editor ────────
+        self._shortcut_times: list[str] = ["15:00", "19:00", "23:00"]
 
-        _fav_btn_style = """
-            QPushButton {
-                background: rgba(30, 41, 59, 0.5);
-                color: #94a3b8;
-                border: 1px solid rgba(51, 65, 85, 0.5);
-                border-radius: 14px;
-                padding: 4px 12px;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background: rgba(59, 130, 246, 0.15);
-                color: #e2e8f0;
-                border-color: rgba(59, 130, 246, 0.4);
-            }
-            QPushButton:pressed {
-                background: rgba(59, 130, 246, 0.3);
-                color: #ffffff;
-            }
-        """
-        for t in ["09:00", "12:00", "15:00", "18:00", "20:00"]:
-            btn = QPushButton(t)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet(_fav_btn_style)
-            btn.clicked.connect(lambda checked, time=t: self._set_favorite_time(time))
-            fav_row.addWidget(btn)
-        fav_row.addStretch()
-        layout.addLayout(fav_row)
+        self._fav_row_container = QWidget()
+        self._fav_row = QHBoxLayout(self._fav_row_container)
+        self._fav_row.setContentsMargins(0, 0, 0, 0)
+        self._fav_row.setSpacing(6)
+        self._build_favorites_row()
+        layout.addWidget(self._fav_row_container)
 
         # ── Summary label ────────────────────────────────────────────
         summary_frame = QFrame()
@@ -408,10 +381,292 @@ class InlineDateTimePicker(QWidget):
         h, m = map(int, time_str.split(':'))
         self._time_edit.setTime(QTime(h, m))
 
+    # ── Shortcut chips + editor ──────────────────────────────────────
+    _FAV_BTN_STYLE = """
+        QPushButton {
+            background: rgba(30, 41, 59, 0.5);
+            color: #94a3b8;
+            border: 1px solid rgba(51, 65, 85, 0.5);
+            border-radius: 14px;
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        QPushButton:hover {
+            background: rgba(59, 130, 246, 0.15);
+            color: #e2e8f0;
+            border-color: rgba(59, 130, 246, 0.4);
+        }
+        QPushButton:pressed {
+            background: rgba(59, 130, 246, 0.3);
+            color: #ffffff;
+        }
+    """
+
+    _PENCIL_BTN_STYLE = """
+        QPushButton {
+            background: transparent;
+            color: #64748b;
+            border: 1px solid rgba(51, 65, 85, 0.5);
+            border-radius: 14px;
+            padding: 3px 10px;
+            font-size: 13px;
+        }
+        QPushButton:hover {
+            background: rgba(139, 92, 246, 0.15);
+            color: #e2e8f0;
+            border-color: rgba(139, 92, 246, 0.5);
+        }
+    """
+
+    def _build_favorites_row(self) -> None:
+        """Reconstrói a linha de atalhos conforme `self._shortcut_times`."""
+        while self._fav_row.count():
+            item = self._fav_row.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        lbl_fav = QLabel("Atalhos:")
+        lbl_fav.setStyleSheet(
+            "color: #475569; font-size: 11px; font-weight: 600;"
+            " background: transparent; border: none;"
+        )
+        self._fav_row.addWidget(lbl_fav)
+
+        for t in self._shortcut_times:
+            btn = QPushButton(t)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(self._FAV_BTN_STYLE)
+            btn.clicked.connect(lambda checked=False, time=t: self._set_favorite_time(time))
+            self._fav_row.addWidget(btn)
+
+        pencil = QPushButton("\u270e")  # ✎ pencil glyph
+        pencil.setCursor(Qt.CursorShape.PointingHandCursor)
+        pencil.setToolTip("Editar atalhos de horário")
+        pencil.setStyleSheet(self._PENCIL_BTN_STYLE)
+        pencil.clicked.connect(self._open_shortcuts_editor)
+        self._fav_row.addWidget(pencil)
+
+        self._fav_row.addStretch()
+
+    def _open_shortcuts_editor(self) -> None:
+        dlg = ShortcutsEditorDialog(self._shortcut_times, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._shortcut_times = dlg.result_times()
+            self._build_favorites_row()
+
+    # ── Calendar popup styling ───────────────────────────────────────
+    def _style_calendar_popup(self, cal: QCalendarWidget) -> None:
+        """Dark-theme styling for the QCalendarWidget popup of QDateEdit."""
+        cal.setGridVisible(False)
+        cal.setVerticalHeaderFormat(
+            QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader
+        )
+        cal.setHorizontalHeaderFormat(
+            QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames
+        )
+        cal.setFirstDayOfWeek(Qt.DayOfWeek.Sunday)
+
+        weekday_fmt = QTextCharFormat()
+        weekday_fmt.setForeground(QBrush(QColor("#e2e8f0")))
+        weekend_fmt = QTextCharFormat()
+        weekend_fmt.setForeground(QBrush(QColor("#cbd5e1")))
+        for day in (
+            Qt.DayOfWeek.Monday, Qt.DayOfWeek.Tuesday, Qt.DayOfWeek.Wednesday,
+            Qt.DayOfWeek.Thursday, Qt.DayOfWeek.Friday,
+        ):
+            cal.setWeekdayTextFormat(day, weekday_fmt)
+        cal.setWeekdayTextFormat(Qt.DayOfWeek.Saturday, weekend_fmt)
+        cal.setWeekdayTextFormat(Qt.DayOfWeek.Sunday, weekend_fmt)
+
+        cal.setStyleSheet("""
+            QCalendarWidget QWidget {
+                background-color: #0f172a;
+                color: #e2e8f0;
+                alternate-background-color: #0f172a;
+            }
+            QCalendarWidget QAbstractItemView {
+                background-color: #0f172a;
+                color: #e2e8f0;
+                selection-background-color: #3b82f6;
+                selection-color: #ffffff;
+                outline: 0;
+                border: none;
+                font-size: 12px;
+                font-family: 'Segoe UI', sans-serif;
+            }
+            QCalendarWidget QAbstractItemView:enabled {
+                color: #e2e8f0;
+            }
+            QCalendarWidget QAbstractItemView:disabled {
+                color: #475569;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1e293b, stop:1 #0f172a);
+                border-bottom: 1px solid rgba(59, 130, 246, 0.25);
+                min-height: 36px;
+            }
+            QCalendarWidget QToolButton {
+                color: #e2e8f0;
+                background: transparent;
+                border: none;
+                font-size: 13px;
+                font-weight: 700;
+                padding: 6px 10px;
+                border-radius: 6px;
+            }
+            QCalendarWidget QToolButton:hover {
+                background: rgba(59, 130, 246, 0.2);
+                color: #ffffff;
+            }
+            QCalendarWidget QToolButton::menu-indicator {
+                image: none;
+                width: 0;
+            }
+            QCalendarWidget QToolButton#qt_calendar_prevmonth,
+            QCalendarWidget QToolButton#qt_calendar_nextmonth {
+                qproperty-icon: none;
+                font-size: 16px;
+                padding: 0 8px;
+            }
+            QCalendarWidget QMenu {
+                background: #1e293b;
+                color: #e2e8f0;
+                border: 1px solid rgba(59, 130, 246, 0.3);
+            }
+            QCalendarWidget QSpinBox {
+                background: #1e293b;
+                color: #e2e8f0;
+                border: 1px solid rgba(59, 130, 246, 0.3);
+                border-radius: 4px;
+                padding: 2px 6px;
+                selection-background-color: #3b82f6;
+            }
+            QCalendarWidget QTableView {
+                selection-background-color: #3b82f6;
+                selection-color: #ffffff;
+            }
+        """)
+
     def selected_datetime(self) -> datetime:
         qd = self._date_edit.date()
         qt = self._time_edit.time()
         return datetime(qd.year(), qd.month(), qd.day(), qt.hour(), qt.minute(), 0)
+
+
+class ShortcutsEditorDialog(QDialog):
+    """Pequeno diálogo para adicionar/remover horários de atalho."""
+
+    def __init__(self, times: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Editar atalhos de horário")
+        self.setModal(True)
+        self.setMinimumWidth(340)
+        self._times: list[str] = list(times)
+
+        self.setStyleSheet("""
+            QDialog { background: #0f172a; }
+            QLabel { color: #e2e8f0; font-size: 12px; background: transparent; }
+            QListWidget {
+                background: #1e293b;
+                color: #e2e8f0;
+                border: 1px solid rgba(59, 130, 246, 0.25);
+                border-radius: 8px;
+                padding: 4px;
+                font-size: 13px;
+            }
+            QListWidget::item { padding: 6px 8px; border-radius: 4px; }
+            QListWidget::item:selected {
+                background: rgba(59, 130, 246, 0.3);
+                color: #ffffff;
+            }
+            QTimeEdit {
+                background: #1e293b;
+                color: #e2e8f0;
+                border: 1px solid rgba(59, 130, 246, 0.25);
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton {
+                background: rgba(59, 130, 246, 0.15);
+                color: #e2e8f0;
+                border: 1px solid rgba(59, 130, 246, 0.35);
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background: rgba(59, 130, 246, 0.3); }
+            QPushButton#danger {
+                background: rgba(239, 68, 68, 0.12);
+                border-color: rgba(239, 68, 68, 0.4);
+                color: #fca5a5;
+            }
+            QPushButton#danger:hover { background: rgba(239, 68, 68, 0.25); }
+        """)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(18, 16, 18, 16)
+        outer.setSpacing(10)
+
+        outer.addWidget(QLabel("Horários atuais:"))
+
+        self._list = QListWidget()
+        self._refresh_list()
+        outer.addWidget(self._list)
+
+        btn_remove = QPushButton("Excluir selecionado")
+        btn_remove.setObjectName("danger")
+        btn_remove.clicked.connect(self._remove_selected)
+        outer.addWidget(btn_remove)
+
+        add_row = QHBoxLayout()
+        add_row.setSpacing(8)
+        add_row.addWidget(QLabel("Adicionar:"))
+        self._new_time = QTimeEdit()
+        self._new_time.setDisplayFormat("HH:mm")
+        self._new_time.setTime(QTime(12, 0))
+        add_row.addWidget(self._new_time)
+        btn_add = QPushButton("+ Adicionar")
+        btn_add.clicked.connect(self._add_new)
+        add_row.addWidget(btn_add)
+        add_row.addStretch()
+        outer.addLayout(add_row)
+
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        outer.addWidget(bb)
+
+    def _refresh_list(self) -> None:
+        self._list.clear()
+        for t in sorted(self._times):
+            self._list.addItem(t)
+
+    def _remove_selected(self) -> None:
+        row = self._list.currentRow()
+        if row < 0:
+            return
+        t = self._list.item(row).text()
+        if t in self._times:
+            self._times.remove(t)
+        self._refresh_list()
+
+    def _add_new(self) -> None:
+        qt = self._new_time.time()
+        new = f"{qt.hour():02d}:{qt.minute():02d}"
+        if new not in self._times:
+            self._times.append(new)
+            self._refresh_list()
+
+    def result_times(self) -> list[str]:
+        return sorted(self._times)
 
 
 # ---------------------------------------------------------------------------

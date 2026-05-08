@@ -100,50 +100,52 @@ def main():
     logger.info(f"Iniciando DarkAgent Pro v{__version__}")
     logger.info("=" * 60)
 
-    # Verificar dependências Python
-    if not verificar_dependencias():
-        if not getattr(sys, "frozen", False):
-            input("\nPressione ENTER para sair...")
-        sys.exit(1)
-
-    # Verificar ferramentas externas
-    ferramentas_ok = verificar_ferramentas_externas()
-
-    # Configurar AppUserModelID para o ícone aparecer na barra de tarefas (Windows only)
-    if sys.platform == "win32":
-        import ctypes
-        myappid = 'darkagent.pro.v2.0'
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-
-    # Criar aplicação Qt
-    app = QApplication(sys.argv)
-    app.setApplicationName("DarkAgent Pro")
-    app.setApplicationVersion(__version__)
-
-    # Set Application Icon (Global)
-    from PyQt6.QtGui import QIcon
-    from config.paths import ASSETS_DIR
-    icon_path = ASSETS_DIR / "icon.png"
-    if icon_path.exists():
-        app.setWindowIcon(QIcon(str(icon_path)))
-
-    # Avisar sobre ferramentas faltando
-    if not ferramentas_ok:
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Icon.Warning)
-        msg.setWindowTitle("Ferramentas Faltando")
-        msg.setText("FFmpeg e/ou FFprobe não foram encontrados!")
-        msg.setInformativeText(
-            "Algumas funcionalidades não estarão disponíveis.\n\n"
-            "Baixe FFmpeg em: https://ffmpeg.org/download.html"
-        )
-        msg.exec()
-
-    # Criar e mostrar janela principal
     try:
+        logger.info("[boot] checando dependências Python...")
+        if not verificar_dependencias():
+            if not getattr(sys, "frozen", False):
+                input("\nPressione ENTER para sair...")
+            sys.exit(1)
+
+        logger.info("[boot] checando FFmpeg/FFprobe...")
+        ferramentas_ok = verificar_ferramentas_externas()
+        logger.info(f"[boot] ferramentas_ok={ferramentas_ok}")
+
+        if sys.platform == "win32":
+            import ctypes
+            myappid = 'darkagent.pro.v2.0'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            logger.info("[boot] AppUserModelID configurado")
+
+        logger.info("[boot] obtendo QApplication...")
+        app = QApplication.instance() or QApplication(sys.argv)
+        app.setApplicationName("DarkAgent Pro")
+        app.setApplicationVersion(__version__)
+
+        from PyQt6.QtGui import QIcon
+        from config.paths import ASSETS_DIR
+        icon_path = ASSETS_DIR / "icon.png"
+        if icon_path.exists():
+            app.setWindowIcon(QIcon(str(icon_path)))
+
+        if not ferramentas_ok:
+            logger.warning("[boot] mostrando aviso de FFmpeg faltando (modal)...")
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.setWindowTitle("Ferramentas Faltando")
+            msg.setText("FFmpeg e/ou FFprobe não foram encontrados!")
+            msg.setInformativeText(
+                "Algumas funcionalidades não estarão disponíveis.\n\n"
+                "Baixe FFmpeg em: https://ffmpeg.org/download.html"
+            )
+            msg.exec()
+            logger.info("[boot] modal FFmpeg fechado pelo usuário")
+
+        logger.info("[boot] importando MainWindow/SplashScreen...")
         from ui.main_window import MainWindow
         from ui.splash_screen import SplashScreen
 
+        logger.info("[boot] criando SplashScreen...")
         splash = SplashScreen()
         splash.show()
 
@@ -156,7 +158,9 @@ def main():
         splash.update_progress(60, "Loading UI components...")
         app.processEvents()
 
+        logger.info("[boot] instanciando MainWindow...")
         window = MainWindow()
+        logger.info("[boot] MainWindow OK")
 
         splash.update_progress(90, "Starting application...")
         app.processEvents()
@@ -171,21 +175,30 @@ def main():
 
         sys.exit(app.exec())
 
+    except SystemExit:
+        raise
     except Exception as e:
         import traceback
-        crash_path = APP_DIR / "logs" / "crash.txt"
-        crash_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(crash_path, "w", encoding="utf-8") as f:
-            f.write(traceback.format_exc())
+        tb = traceback.format_exc()
+        try:
+            crash_path = APP_DIR / "logs" / "crash.txt"
+            crash_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(crash_path, "w", encoding="utf-8") as f:
+                f.write(tb)
+        except Exception:
+            pass
 
-        logger.error(f"Erro fatal ao iniciar aplicação: {e}", exc_info=True)
+        logger.error(f"Erro fatal ao iniciar aplicação: {e}\n{tb}")
 
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Icon.Critical)
-        msg.setWindowTitle("Erro Fatal")
-        msg.setText("Erro ao iniciar a aplicação!")
-        msg.setDetailedText(str(e))
-        msg.exec()
+        try:
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setWindowTitle("Erro Fatal")
+            msg.setText("Erro ao iniciar a aplicação!")
+            msg.setDetailedText(tb)
+            msg.exec()
+        except Exception:
+            pass
 
         sys.exit(1)
 
