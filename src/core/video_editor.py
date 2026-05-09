@@ -1,7 +1,10 @@
 """Operações de edição de vídeo com FFmpeg"""
 
+import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 import logging
 from pathlib import Path
 from typing import Optional, List
@@ -30,8 +33,22 @@ def _ffmpeg_escape_text(text: str) -> str:
 
 
 def _ffmpeg_escape_path(path: str) -> str:
-    """Converte caminho Windows para o formato aceito por filtros FFmpeg."""
-    return path.replace("\\", "/").replace(":", "\\:")
+    """Escapa um caminho para uso DENTRO de single quotes num filtro FFmpeg.
+
+    Aplica três passos cumulativos:
+    - `\\` -> `/`  (forward slashes funcionam melhor no Windows com filtros)
+    - `:`  -> `\\:` (drive letter colon precisa escape no parser do filtro)
+    - `'`  -> `\\'` (apóstrofo fecharia a string single-quoted prematuramente)
+
+    O bug clássico sem o escape de `'`: um arquivo como
+    `Tooth Fairy's Tats.ass` vira `Tooth Fairys Tats.ass` no filtro porque
+    o parser interpreta `'s Tats.ass` como conteúdo fora das aspas.
+    """
+    return (
+        path.replace("\\", "/")
+            .replace(":", "\\:")
+            .replace("'", "\\'")
+    )
 
 
 class VideoEditor:
@@ -60,59 +77,72 @@ class VideoEditor:
             bool indicando sucesso
         """
         logger.info(f"Queimando legendas em {video_path}")
-        
-        # Para Windows, o filtro subtitles funciona melhor com forward slashes e escape no drive
-        # Ex: C:/path/to/file.ass -> C\:/path/to/file.ass
-        subtitle_str = str(subtitle_path).replace('\\', '/').replace(':', '\\:')
-        
-        # Comando FFmpeg
-        cmd = [
-            "ffmpeg",
-            "-i", str(video_path),
-            "-vf", f"subtitles='{subtitle_str}'",  # Aspas simples ajudam
-            "-c:v", "libx264",
-            "-preset", preset,
-            "-crf", "23",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-y",
-            str(output_path)
-        ]
-        
-        # Log do comando para debug
-        logger.info(f"Comando FFmpeg: {' '.join(cmd)}")
-        logger.info(f"Arquivo de saída esperado: {output_path}")
-        
+
+        # Workaround: o parser interno do filtro `subtitles` quebra com
+        # apóstrofos (e provavelmente outros caracteres especiais) no
+        # caminho do arquivo .ass — testado com 5 variantes de escape
+        # (single-quote, double-quote, close-reopen, sem quotes, etc.) e
+        # nenhuma resolve. A solução robusta é copiar o .ass para um path
+        # ASCII-safe no temp dir e apontar o filtro para essa cópia.
         try:
-            # stdin=subprocess.DEVNULL evita que o ffmpeg trave esperando input
-            resultado = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=3600,
-                stdin=subprocess.DEVNULL
-            )
-            
-            logger.info(f"FFmpeg returncode: {resultado.returncode}")
-            logger.info(f"FFmpeg stdout: {resultado.stdout[-500:] if resultado.stdout else 'vazio'}")
-            
-            if resultado.returncode == 0:
-                if output_path.exists():
-                    file_size = output_path.stat().st_size / (1024 * 1024)  # MB
-                    logger.info(f"✅ Legendas queimadas com sucesso: {output_path} ({file_size:.2f} MB)")
-                    return True
-                else:
+            tmp_ass = Path(tempfile.gettempdir()) / f"darkagent_sub_{uuid.uuid4().hex[:12]}.ass"
+            shutil.copy2(subtitle_path, tmp_ass)
+        except OSError as e:
+            logger.error(f"Falha ao copiar .ass para temp: {e}")
+            return False
+
+        try:
+            subtitle_str = _ffmpeg_escape_path(str(tmp_ass))
+
+            cmd = [
+                "ffmpeg",
+                "-i", str(video_path),
+                "-vf", f"subtitles='{subtitle_str}'",
+                "-c:v", "libx264",
+                "-preset", preset,
+                "-crf", "23",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-y",
+                str(output_path)
+            ]
+
+            logger.info(f"Comando FFmpeg: {' '.join(cmd)}")
+            logger.info(f"Arquivo de saída esperado: {output_path}")
+
+            try:
+                resultado = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=3600,
+                    stdin=subprocess.DEVNULL
+                )
+
+                logger.info(f"FFmpeg returncode: {resultado.returncode}")
+                logger.info(f"FFmpeg stdout: {resultado.stdout[-500:] if resultado.stdout else 'vazio'}")
+
+                if resultado.returncode == 0:
+                    if output_path.exists():
+                        file_size = output_path.stat().st_size / (1024 * 1024)
+                        logger.info(f"✅ Legendas queimadas com sucesso: {output_path} ({file_size:.2f} MB)")
+                        return True
                     logger.error(f"❌ FFmpeg retornou sucesso mas arquivo não foi criado: {output_path}")
                     logger.error(f"Stderr: {resultado.stderr[-1000:]}")
                     return False
-            else:
+
                 logger.error(f"❌ Erro ao queimar legendas (código {resultado.returncode})")
                 logger.error(f"Stderr: {resultado.stderr[-1000:]}")
                 return False
-                
-        except Exception as e:
-            logger.error(f"Exceção ao queimar legendas: {e}")
-            return False
+
+            except Exception as e:
+                logger.error(f"Exceção ao queimar legendas: {e}")
+                return False
+        finally:
+            try:
+                tmp_ass.unlink(missing_ok=True)
+            except OSError:
+                pass
     
     def queimar_marcador(
         self,
