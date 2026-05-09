@@ -4,12 +4,155 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 import logging
 from pathlib import Path
-from typing import Optional, List
+from typing import Callable, Optional, List
 
 logger = logging.getLogger(__name__)
+
+
+def _probe_duration(video_path: Path) -> Optional[float]:
+    """Retorna a duração do vídeo em segundos via ffprobe, ou None se falhar.
+
+    Usado para mapear `out_time_us` do `-progress pipe:1` em pct (0–100).
+    """
+    sp_kw: dict = {}
+    if sys.platform == "win32":
+        sp_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(video_path),
+            ],
+            capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL, **sp_kw,
+        )
+        if result.returncode == 0:
+            return float(result.stdout.strip())
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _run_ffmpeg_with_progress(
+    cmd: list,
+    *,
+    duration_sec: Optional[float],
+    progress_callback: Optional[Callable[[float], None]],
+    output_path: Path,
+    timeout: int = 3600,
+) -> bool:
+    """Executa ffmpeg via Popen, parseia `-progress pipe:1` e drena stderr em thread.
+
+    O fluxo bloqueante de `subprocess.run(capture_output=True)` esconde o
+    progresso do encode até terminar. Aqui lemos `out_time_us=` linha-por-linha
+    e chamamos `progress_callback(pct)` em cada incremento de 1%.
+
+    `cmd` deve incluir `-progress pipe:1` (essa função NÃO adiciona).
+    Stderr é drenado num thread separado para não dar deadlock no buffer
+    quando ffmpeg escreve avisos.
+    """
+    sp_kw: dict = {}
+    if sys.platform == "win32":
+        sp_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+            **sp_kw,
+        )
+    except Exception as e:
+        logger.error(f"Falha ao iniciar ffmpeg: {e}")
+        return False
+
+    stderr_chunks: List[str] = []
+
+    def _drain_stderr():
+        try:
+            for line in proc.stderr:
+                stderr_chunks.append(line)
+        except Exception:
+            pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    timed_out = {"flag": False}
+
+    def _kill_on_timeout():
+        if proc.poll() is None:
+            timed_out["flag"] = True
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+    timer = threading.Timer(timeout, _kill_on_timeout)
+    timer.daemon = True
+    timer.start()
+
+    last_pct_emitted = -1
+    try:
+        for raw in proc.stdout:
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("out_time_us="):
+                val = line.split("=", 1)[1]
+                if val.isdigit() and duration_sec and duration_sec > 0:
+                    pct = min(100.0, int(val) / 1_000_000 / duration_sec * 100)
+                    pct_int = int(pct)
+                    if progress_callback and pct_int > last_pct_emitted:
+                        try:
+                            progress_callback(pct)
+                        except Exception as cb_err:
+                            logger.debug(f"progress_callback raised: {cb_err}")
+                        last_pct_emitted = pct_int
+            elif line.startswith("progress=end"):
+                if progress_callback and last_pct_emitted < 100:
+                    try:
+                        progress_callback(100.0)
+                    except Exception:
+                        pass
+                break
+    finally:
+        timer.cancel()
+        try:
+            rc = proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            rc = -1
+        stderr_thread.join(timeout=5)
+
+    stderr_text = "".join(stderr_chunks)
+
+    if timed_out["flag"]:
+        logger.error(f"Timeout no ffmpeg após {timeout}s")
+        return False
+
+    if rc == 0 and output_path.exists():
+        size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Render concluído: {output_path.name} ({size_mb:.2f} MB)")
+        return True
+
+    logger.error(f"❌ FFmpeg falhou (rc={rc})")
+    if stderr_text:
+        logger.error(f"Stderr: {stderr_text[-1000:]}")
+    return False
 
 
 # Posições suportadas pelo marcador permanente (fórmulas FFmpeg)
@@ -62,28 +205,28 @@ class VideoEditor:
         video_path: Path,
         subtitle_path: Path,
         output_path: Path,
-        preset: str = "medium"
+        preset: str = "medium",
+        progress_callback: Optional[Callable[[float], None]] = None,
     ) -> bool:
         """
-        Queima legendas ASS no vídeo
-        
+        Queima legendas ASS no vídeo, com progresso em tempo real.
+
         Args:
             video_path: Caminho do vídeo original
             subtitle_path: Caminho do arquivo ASS
             output_path: Caminho do vídeo final
             preset: Preset de encoding (ultrafast, fast, medium, slow)
-        
+            progress_callback: Função opcional chamada com pct (0.0–100.0)
+                a cada incremento de 1% durante o encode.
+
         Returns:
             bool indicando sucesso
         """
         logger.info(f"Queimando legendas em {video_path}")
 
         # Workaround: o parser interno do filtro `subtitles` quebra com
-        # apóstrofos (e provavelmente outros caracteres especiais) no
-        # caminho do arquivo .ass — testado com 5 variantes de escape
-        # (single-quote, double-quote, close-reopen, sem quotes, etc.) e
-        # nenhuma resolve. A solução robusta é copiar o .ass para um path
-        # ASCII-safe no temp dir e apontar o filtro para essa cópia.
+        # apóstrofos no caminho do .ass — testado com 5 variantes de escape
+        # e nenhuma resolve. Copiamos o .ass para um path ASCII-safe.
         try:
             tmp_ass = Path(tempfile.gettempdir()) / f"darkagent_sub_{uuid.uuid4().hex[:12]}.ass"
             shutil.copy2(subtitle_path, tmp_ass)
@@ -93,9 +236,13 @@ class VideoEditor:
 
         try:
             subtitle_str = _ffmpeg_escape_path(str(tmp_ass))
+            duration_sec = _probe_duration(video_path)
 
             cmd = [
                 "ffmpeg",
+                "-hide_banner",
+                "-nostats",
+                "-loglevel", "error",
                 "-i", str(video_path),
                 "-vf", f"subtitles='{subtitle_str}'",
                 "-c:v", "libx264",
@@ -103,41 +250,21 @@ class VideoEditor:
                 "-crf", "23",
                 "-c:a", "aac",
                 "-b:a", "192k",
+                "-progress", "pipe:1",
                 "-y",
-                str(output_path)
+                str(output_path),
             ]
 
             logger.info(f"Comando FFmpeg: {' '.join(cmd)}")
-            logger.info(f"Arquivo de saída esperado: {output_path}")
+            logger.info(f"Arquivo de saída esperado: {output_path} (duração: {duration_sec}s)")
 
-            try:
-                resultado = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=3600,
-                    stdin=subprocess.DEVNULL
-                )
-
-                logger.info(f"FFmpeg returncode: {resultado.returncode}")
-                logger.info(f"FFmpeg stdout: {resultado.stdout[-500:] if resultado.stdout else 'vazio'}")
-
-                if resultado.returncode == 0:
-                    if output_path.exists():
-                        file_size = output_path.stat().st_size / (1024 * 1024)
-                        logger.info(f"✅ Legendas queimadas com sucesso: {output_path} ({file_size:.2f} MB)")
-                        return True
-                    logger.error(f"❌ FFmpeg retornou sucesso mas arquivo não foi criado: {output_path}")
-                    logger.error(f"Stderr: {resultado.stderr[-1000:]}")
-                    return False
-
-                logger.error(f"❌ Erro ao queimar legendas (código {resultado.returncode})")
-                logger.error(f"Stderr: {resultado.stderr[-1000:]}")
-                return False
-
-            except Exception as e:
-                logger.error(f"Exceção ao queimar legendas: {e}")
-                return False
+            return _run_ffmpeg_with_progress(
+                cmd,
+                duration_sec=duration_sec,
+                progress_callback=progress_callback,
+                output_path=output_path,
+                timeout=3600,
+            )
         finally:
             try:
                 tmp_ass.unlink(missing_ok=True)

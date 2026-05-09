@@ -247,12 +247,20 @@ class ProcessadorThread(QThread):
 
                     subtitle_gen.gerar_ass(transcricao, self.estilo, ass_path)
 
-                    # Queimar legendas
+                    # Queimar legendas (com progresso em tempo real)
                     report_progress("Renderizando vídeo final...", 85)
                     editor = VideoEditor()
                     output_path = caminho_video.parent / f"{caminho_video.stem}_final.mp4"
 
-                    if not editor.queimar_legendas(caminho_video, ass_path, output_path):
+                    def _burn_progress(pct: float):
+                        # Mapeia 0–100% do encode para 85–94% do passo do vídeo
+                        step = 85 + (pct * 0.09)
+                        report_progress(f"Renderizando... {pct:.0f}%", step)
+
+                    if not editor.queimar_legendas(
+                        caminho_video, ass_path, output_path,
+                        progress_callback=_burn_progress,
+                    ):
                         resultados["falha"].append((url, "Falha ao renderizar"))
                         continue
 
