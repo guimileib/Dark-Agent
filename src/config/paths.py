@@ -80,6 +80,13 @@ MODELS_DIR = APP_DIR / "models"
 ACCOUNTS_DIR = APP_DIR / "accounts"
 LOGS_DIR = APP_DIR / "logs"
 
+# Convenções de subpastas dentro de qualquer pasta de output (a do app ou
+# a que o usuário escolher pela UI). Uso: output_subdir(base, OUTPUT_RAW).
+OUTPUT_RAW = "raw"        # downloads brutos (sem legenda)
+OUTPUT_FINAL = "final"    # vídeos com legenda queimada / marcador
+OUTPUT_CLIPS = "clips"    # clips extraídos
+OUTPUT_TEMP = "temp"      # .wav, .ass intermediários, qualquer transitório
+
 # Mutable config (user settings saved here, not in the bundle)
 USER_CONFIG_DIR = APP_DIR / "config"
 
@@ -106,3 +113,17 @@ def get_user_config_file() -> Path:
     """Return path to the user-writable config.json."""
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     return USER_CONFIG_DIR / "config.json"
+
+
+def output_subdir(base: Path, kind: str) -> Path:
+    """Resolve uma subpasta semântica dentro da pasta de output do usuário.
+
+    `kind` deve ser uma das constantes OUTPUT_RAW / OUTPUT_FINAL / OUTPUT_CLIPS
+    / OUTPUT_TEMP. Cria a subpasta se não existir e retorna o Path.
+
+    Útil pra evitar que downloads brutos, vídeos finais, clips e arquivos
+    transitórios fiquem misturados num único nível.
+    """
+    sub = Path(base) / kind
+    sub.mkdir(parents=True, exist_ok=True)
+    return sub

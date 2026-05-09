@@ -12,6 +12,7 @@ from pathlib import Path
 import logging
 
 from config.settings import settings
+from config.paths import output_subdir, OUTPUT_CLIPS
 
 logger = logging.getLogger(__name__)
 
@@ -648,8 +649,7 @@ class ClipWidget(QWidget):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
 
-        output_dir = settings.output_dir / "clips"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = output_subdir(settings.output_dir, OUTPUT_CLIPS)
 
         self._batch_thread = ClipBatchDownloadThread(
             self.video_path, self.clips_sugeridos, output_dir

@@ -2,13 +2,23 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from config.paths import (
     CONFIG_DIR, ASSETS_DIR, OUTPUT_DIR, CACHE_DIR, MODELS_DIR,
-    COOKIES_FILE, ACCOUNTS_DIR, get_user_config_file, ensure_dirs,
+    COOKIES_FILE, ACCOUNTS_DIR, APP_DIR, get_user_config_file, ensure_dirs,
 )
+
+# Carrega .env (ao lado do .exe ou na raiz do projeto em dev) para popular
+# os.environ ANTES de qualquer leitura de variável de ambiente abaixo.
+# Falha silenciosa se python-dotenv não estiver instalado ou .env não existir.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(APP_DIR / ".env")
+except ImportError:
+    pass
 
 try:
     from models import EstiloLegenda
@@ -95,12 +105,16 @@ class Settings:
                         "ytdlp_concurrent_fragments", self.ytdlp_concurrent_fragments
                     )
                     self.last_open_dir = data.get("last_open_dir", str(Path.home()))
-                    self.gemini_api_key = data.get("gemini_api_key", "")
+                    # API key: env wins (do .env ou shell). Fallback: config.json.
+                    env_key = os.environ.get("GEMINI_API_KEY", "").strip()
+                    self.gemini_api_key = env_key or data.get("gemini_api_key", "")
             except Exception as e:
                 print(f"Erro ao carregar config: {e}")
                 self.last_open_dir = str(Path.home())
+                self.gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
         else:
             self.last_open_dir = str(Path.home())
+            self.gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
 
     def save_config(self):
         """Salva configurações no arquivo JSON (user-writable)"""
