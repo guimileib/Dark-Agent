@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon
 
 from config.settings import settings
-from config.paths import APP_DIR
+from config.paths import APP_DIR, output_subdir, OUTPUT_RAW, OUTPUT_FINAL, OUTPUT_TEMP
 from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget, EditorWidget
 from core import (
     VideoDownloader, VideoValidator, Transcriber,
@@ -187,6 +187,13 @@ class ProcessadorThread(QThread):
 
                 audio_path: Optional[Path] = None
                 try:
+                    # Subpastas semânticas dentro da pasta de output do usuário.
+                    # Mantém raw / final / temp separados em vez de tudo flat.
+                    base_out = Path(self.config["pasta"])
+                    raw_dir = output_subdir(base_out, OUTPUT_RAW)
+                    final_dir = output_subdir(base_out, OUTPUT_FINAL)
+                    temp_dir = output_subdir(base_out, OUTPUT_TEMP)
+
                     # Check if it is a local file
                     is_local_file = Path(url).exists() and Path(url).is_file()
 
@@ -194,9 +201,9 @@ class ProcessadorThread(QThread):
                         caminho_video = Path(url)
                         report_progress(f"Arquivo local: {caminho_video.name}", 5)
                     else:
-                        # Download
+                        # Download → raw/
                         report_progress("Baixando vídeo...", 10)
-                        downloader = VideoDownloader(self.config["pasta"])
+                        downloader = VideoDownloader(raw_dir)
                         sucesso, caminho_video, estrategia = downloader.download(
                             url,
                             self.config["qualidade"]
@@ -217,14 +224,14 @@ class ProcessadorThread(QThread):
                         resultados["falha"].append((url, f"Vídeo inválido: {checks}"))
                         continue
 
-                    # Extrair áudio
+                    # Extrair áudio → temp/
                     report_progress("Extraindo áudio...", 30)
                     transcriber = Transcriber(
                         modelo=settings.whisper_model,
                         device=settings.whisper_device,
                         idioma=settings.whisper_language  # None = auto-detect
                     )
-                    audio_path = caminho_video.parent / f"audio_temp_{i}.wav"
+                    audio_path = temp_dir / f"audio_temp_{i}.wav"
 
                     if not transcriber.extrair_audio_de_video(caminho_video, audio_path):
                         resultados["falha"].append((url, "Falha ao extrair áudio"))
@@ -240,24 +247,33 @@ class ProcessadorThread(QThread):
                     if self.isInterruptionRequested():
                         break
 
-                    # Gerar legendas
+                    # Gerar legendas → temp/ (intermediário)
                     report_progress("Gerando legendas...", 70)
                     subtitle_gen = SubtitleGenerator()
-                    ass_path = caminho_video.parent / f"{caminho_video.stem}.ass"
+                    ass_path = temp_dir / f"{caminho_video.stem}.ass"
 
                     subtitle_gen.gerar_ass(transcricao, self.estilo, ass_path)
 
-                    # Queimar legendas
+                    # Queimar legendas → final/
                     report_progress("Renderizando vídeo final...", 85)
                     editor = VideoEditor()
-                    output_path = caminho_video.parent / f"{caminho_video.stem}_final.mp4"
+                    output_path = final_dir / f"{caminho_video.stem}_final.mp4"
 
-                    if not editor.queimar_legendas(caminho_video, ass_path, output_path):
+                    def _burn_progress(pct: float):
+                        # Mapeia 0–100% do encode para 85–94% do passo do vídeo
+                        step = 85 + (pct * 0.09)
+                        report_progress(f"Renderizando... {pct:.0f}%", step)
+
+                    if not editor.queimar_legendas(
+                        caminho_video, ass_path, output_path,
+                        progress_callback=_burn_progress,
+                    ):
                         resultados["falha"].append((url, "Falha ao renderizar"))
                         continue
 
-                    # Aplicar marcador permanente, se solicitado
-                    marker = self.config.get("marker")
+                    # Aplicar marcador permanente per-URL, se solicitado
+                    markers = self.config.get("markers") or {}
+                    marker = markers.get(url)
                     if marker:
                         report_progress("Aplicando marcador...", 95)
                         marked_path = output_path.parent / f"{output_path.stem}_marked.mp4"
@@ -315,7 +331,7 @@ class BatchDownloadThread(QThread):
     def run(self):
         urls = self.config.get("urls", [])
         total = len(urls)
-        marker = self.config.get("marker")  # {"text": str, "position": str} ou None
+        markers = self.config.get("markers") or {}  # {url: {"text", "position"}}
         resultados = {"sucesso": [], "falha": []}
 
         try:
@@ -325,7 +341,9 @@ class BatchDownloadThread(QThread):
 
                 self.progresso.emit(f"Baixando {i+1}/{total}: {url}...", int((i / total) * 100))
 
-                downloader = VideoDownloader(self.config["pasta"])
+                # Download apenas → raw/ dentro da pasta escolhida pelo usuário.
+                raw_dir = output_subdir(Path(self.config["pasta"]), OUTPUT_RAW)
+                downloader = VideoDownloader(raw_dir)
                 try:
                     sucesso, caminho, estrategia = downloader.download(
                         url,
@@ -333,13 +351,16 @@ class BatchDownloadThread(QThread):
                     )
 
                     if sucesso:
-                        # Aplicar marcador permanente, se solicitado
+                        # Aplicar marcador permanente per-URL, se solicitado
+                        marker = markers.get(url)
                         if marker and caminho:
                             self.progresso.emit(
                                 f"Aplicando marcador no vídeo {i+1}/{total}...",
                                 int(((i + 0.5) / total) * 100),
                             )
-                            caminho_final = self._aplicar_marcador(Path(caminho), marker)
+                            caminho_final = self._aplicar_marcador(
+                                Path(caminho), marker, Path(self.config["pasta"])
+                            )
                             if caminho_final:
                                 caminho = caminho_final
                             else:
@@ -365,10 +386,15 @@ class BatchDownloadThread(QThread):
             self.concluido.emit(resultados)
 
     @staticmethod
-    def _aplicar_marcador(video_path: Path, marker: dict) -> Optional[Path]:
-        """Queima o marcador no vídeo, substituindo o original. Retorna o novo caminho ou None."""
+    def _aplicar_marcador(video_path: Path, marker: dict, base_out: Path) -> Optional[Path]:
+        """Queima o marcador, escrevendo em final/ e descartando o raw original.
+
+        Quando há marcador, o arquivo deixa de ser "raw" — vai pra final/ e o
+        download bruto é removido pra não duplicar storage.
+        """
         editor = VideoEditor()
-        out_path = video_path.parent / f"{video_path.stem}_marked.mp4"
+        final_dir = output_subdir(base_out, OUTPUT_FINAL)
+        out_path = final_dir / f"{video_path.stem}_marked.mp4"
         ok = editor.queimar_marcador(
             video_path=video_path,
             texto=marker["text"],
@@ -377,14 +403,12 @@ class BatchDownloadThread(QThread):
         )
         if not ok or not out_path.exists():
             return None
-        # Substitui o original
+        # Sucesso: descarta o raw (usuário pediu marker, então não precisa do bruto)
         try:
             video_path.unlink()
-            out_path.rename(video_path)
-            return video_path
         except OSError as e:
-            logger.warning(f"Não foi possível substituir o original ({e}); mantendo {out_path}")
-            return out_path
+            logger.warning(f"Não foi possível remover raw ({e}); mantendo ambos")
+        return out_path
 
 
 class MainWindow(QMainWindow):
@@ -395,7 +419,13 @@ class MainWindow(QMainWindow):
         # Thread attributes must be initialized here — sem referência forte em
         # self, o GC pode destruir o objeto Python enquanto a thread nativa ainda
         # está rodando (undefined behavior no Qt).
-        self.thread_processamento: Optional[QThread] = None
+        #
+        # Operações de longa duração são organizadas por "kind" para permitir
+        # paralelismo entre kinds distintos (ex.: download + legendas ao mesmo
+        # tempo) e bloquear apenas duplicatas do mesmo kind. Kinds usados:
+        #   'download' — BatchDownloadThread (yt-dlp + opcional marcador)
+        #   'legendas' — ProcessadorThread (whisper, GPU-bound)
+        self.threads: dict[str, QThread] = {}
         self.thread_preview: Optional[QThread] = None
         self.thread_update: Optional[QThread] = None
         self.init_ui()
@@ -775,18 +805,35 @@ class MainWindow(QMainWindow):
             self.subtitle_widget.update_video_list(items)
 
     def _is_thread_running(self) -> bool:
-        """Check if any processing thread is currently running."""
-        return (self.thread_processamento is not None
-                and self.thread_processamento.isRunning())
+        """True se qualquer kind de operação estiver ativa (compat com chamadores antigos)."""
+        return any(t is not None and t.isRunning() for t in self.threads.values())
+
+    def _is_kind_running(self, kind: str) -> bool:
+        """True se houver thread daquele kind ativa (ex.: 'download', 'legendas')."""
+        t = self.threads.get(kind)
+        return t is not None and t.isRunning()
 
     def _is_preview_thread_running(self) -> bool:
         return self.thread_preview is not None and self.thread_preview.isRunning()
 
+    def _maybe_hide_progress(self):
+        """Esconde a barra global apenas se nenhuma operação estiver ativa.
+
+        Com paralelismo, callbacks de uma operação não podem esconder a barra
+        unilateralmente — outra pode ainda estar rodando.
+        """
+        if (not any(t is not None and t.isRunning() for t in self.threads.values())
+                and not self._is_preview_thread_running()):
+            self.progress_bar.setRange(0, 100)  # restaura modo determinado
+            self.progress_bar.setVisible(False)
+            self.progress_bar.setValue(0)
+            self.status_label.setText("")
+
     def processar_video(self):
         """Inicia processamento do vídeo (Batch Auto)"""
-        if self._is_thread_running():
+        if self._is_kind_running('legendas'):
             self.show_centered_message(
-                "Aguarde", "Já existe um processamento em andamento!",
+                "Aguarde", "Já existe um processamento de legendas em andamento!",
                 QMessageBox.Icon.Warning)
             return
 
@@ -820,45 +867,50 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         
-        # Iniciar thread
-        self.thread_processamento = ProcessadorThread(config, estilo)
-        self.thread_processamento.progresso.connect(self.atualizar_progresso)
-        self.thread_processamento.concluido.connect(self.processamento_concluido)
-        self.thread_processamento.start()
-    
+        # Iniciar thread (kind='legendas' — bloqueia outras de legendas)
+        thread = ProcessadorThread(config, estilo)
+        thread.progresso.connect(lambda msg, pct: self.atualizar_progresso(f"⚡ {msg}", pct))
+        thread.concluido.connect(self.processamento_concluido)
+        self.threads['legendas'] = thread
+        thread.start()
+
     def atualizar_progresso(self, mensagem: str, percentual: int):
-        """Atualiza barra de progresso do processamento (prioridade sobre preview)."""
+        """Atualiza barra de progresso do processamento (prioridade sobre preview).
+
+        Com múltiplos kinds ativos, troca pra modo indeterminado pra evitar a
+        barra ficar pulando entre os percentuais conflitantes de cada operação.
+        """
         self.status_label.setText(mensagem)
-        self.progress_bar.setValue(percentual)
+        active_kinds = sum(1 for t in self.threads.values() if t is not None and t.isRunning())
+        if active_kinds > 1:
+            self.progress_bar.setRange(0, 0)  # spinner
+        else:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(percentual)
         self.progress_bar.setVisible(True)
     
     def processamento_concluido(self, resultados):
         """Callback quando processamento termina (Batch)"""
         self.btn_processar.setEnabled(True)
-        
+        self.threads.pop('legendas', None)
+
         sucessos = resultados.get("sucesso", [])
         falhas = resultados.get("falha", [])
-        
+
         msg = f"Processamento concluído!\n\n✅ Sucesso: {len(sucessos)}\n❌ Falhas: {len(falhas)}"
-        
+
         if falhas:
             msg += "\n\nErros:\n"
             for url, erro in falhas:
                 msg += f"• {url}: {erro}\n"
-        
+
         icon = QMessageBox.Icon.Information if not falhas else QMessageBox.Icon.Warning
-        
+
         # Mostrar relatório se houver processamentos
         if sucessos or falhas:
             self.show_centered_message("Relatório de Processamento", msg, icon)
-        
-        self.status_label.setText("")
-        
-        # Hide only if preview thread is not running
-        if not self._is_preview_thread_running():
-            self.progress_bar.setVisible(False)
 
-        self.progress_bar.setValue(0)
+        self._maybe_hide_progress()
 
         # Auto-preencher aba de upload com o primeiro sucesso
         if sucessos and hasattr(self, 'upload_widget'):
@@ -914,9 +966,9 @@ class MainWindow(QMainWindow):
     
     def iniciar_fluxo_completo(self, urls, qualidade, pasta):
         """Inicia o fluxo completo: download + legenda para URLs da aba Download."""
-        if self._is_thread_running():
+        if self._is_kind_running('legendas'):
             self.show_centered_message(
-                "Aguarde", "Já existe um processamento em andamento!",
+                "Aguarde", "Já existe um processamento de legendas em andamento!",
                 QMessageBox.Icon.Warning)
             return
 
@@ -942,25 +994,26 @@ class MainWindow(QMainWindow):
             "urls": urls,
             "qualidade": qualidade,
             "pasta": pasta,
-            "marker": self.download_widget.get_marker(),
+            "markers": self.download_widget.get_markers(),
         }
 
-        # Desabilitar botões
-        self.download_widget.btn_baixar.setEnabled(False)
+        # Apenas o botão deste kind é desabilitado — download apenas continua
+        # disponível em paralelo (kind 'download' independente).
         self.download_widget.btn_baixar_legendar.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.status_label.setText("⚡ Iniciando fluxo completo...")
 
-        self.thread_processamento = ProcessadorThread(config, estilo)
-        self.thread_processamento.progresso.connect(self.atualizar_progresso)
-        self.thread_processamento.concluido.connect(self._fluxo_completo_concluido)
-        self.thread_processamento.start()
+        thread = ProcessadorThread(config, estilo)
+        thread.progresso.connect(lambda msg, pct: self.atualizar_progresso(f"⚡ {msg}", pct))
+        thread.concluido.connect(self._fluxo_completo_concluido)
+        self.threads['legendas'] = thread
+        thread.start()
 
     def _fluxo_completo_concluido(self, resultados):
         """Callback quando o fluxo completo (download+legenda) termina."""
-        self.download_widget.btn_baixar.setEnabled(True)
         self.download_widget.btn_baixar_legendar.setEnabled(True)
+        self.threads.pop('legendas', None)
 
         sucessos = resultados.get("sucesso", [])
         falhas   = resultados.get("falha", [])
@@ -975,10 +1028,7 @@ class MainWindow(QMainWindow):
         if sucessos or falhas:
             self.show_centered_message("Relatório — Baixar + Legendar", msg, icon)
 
-        self.status_label.setText("")
-        if not self._is_preview_thread_running():
-            self.progress_bar.setVisible(False)
-        self.progress_bar.setValue(0)
+        self._maybe_hide_progress()
 
         # Preencher aba Upload com o primeiro vídeo legendado
         if sucessos and hasattr(self, 'upload_widget'):
@@ -986,9 +1036,9 @@ class MainWindow(QMainWindow):
 
     def baixar_video_apenas(self, urls, qualidade, pasta):
         """Inicia download apenas do vídeo (Batch)"""
-        if self._is_thread_running():
+        if self._is_kind_running('download'):
             self.show_centered_message(
-                "Aguarde", "Já existe um processamento em andamento!",
+                "Aguarde", "Já existe um download em andamento!",
                 QMessageBox.Icon.Warning)
             return
 
@@ -1000,27 +1050,27 @@ class MainWindow(QMainWindow):
             "urls": urls,
             "qualidade": qualidade,
             "pasta": pasta,
-            "marker": self.download_widget.get_marker(),
+            "markers": self.download_widget.get_markers(),
         }
         
-        # Desabilitar UI
+        # Desabilita só o botão deste kind — fluxo legendar segue disponível em paralelo.
         self.download_widget.btn_baixar.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        
-        # Iniciar thread (Batch)
-        self.thread_processamento = BatchDownloadThread(config)
-        self.thread_processamento.progresso.connect(self.atualizar_progresso)
-        self.thread_processamento.concluido.connect(self.download_video_concluido)
-        self.thread_processamento.start()
+
+        # Iniciar thread (kind='download' — paralelo com 'legendas')
+        thread = BatchDownloadThread(config)
+        thread.progresso.connect(lambda msg, pct: self.atualizar_progresso(f"⬇ {msg}", pct))
+        thread.concluido.connect(self.download_video_concluido)
+        self.threads['download'] = thread
+        thread.start()
         
     def download_video_concluido(self, resultados):
         """Callback do download de vídeo apenas (Batch)"""
         self.download_widget.btn_baixar.setEnabled(True)
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setValue(0)
-        self.status_label.setText("")
-        
+        self.threads.pop('download', None)
+        self._maybe_hide_progress()
+
         sucessos = resultados.get("sucesso", [])
         falhas = resultados.get("falha", [])
         
@@ -1112,9 +1162,12 @@ class MainWindow(QMainWindow):
             # deixamos o OS encerrar no shutdown do processo.
             threads = [
                 ("preview", getattr(self, "thread_preview", None)),
-                ("processamento", getattr(self, "thread_processamento", None)),
                 ("update", getattr(self, "thread_update", None)),
             ]
+            # Adicionar todas as operações por kind (download, legendas, etc.)
+            for kind, t in list(self.threads.items()):
+                threads.append((kind, t))
+
             for name, thread in threads:
                 if thread and thread.isRunning():
                     logger.info(f"Aguardando thread de {name} finalizar...")

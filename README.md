@@ -40,6 +40,13 @@ copy .env.example .env
 
 # 5. Execute
 python src/main.py
+
+# 6. (Opcional) Crie executável
+pyinstaller --onefile --windowed src/main.py --name DarkAgentPro
+
+# 7. (Opcional) Rebuild com PyInstaller
+pyinstaller DarkAgentLauncher.spec --clean
+
 ```
 
 ## 📖 Como Usar

@@ -2,13 +2,23 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from config.paths import (
     CONFIG_DIR, ASSETS_DIR, OUTPUT_DIR, CACHE_DIR, MODELS_DIR,
-    COOKIES_FILE, ACCOUNTS_DIR, get_user_config_file, ensure_dirs,
+    COOKIES_FILE, ACCOUNTS_DIR, APP_DIR, get_user_config_file, ensure_dirs,
 )
+
+# Carrega .env (ao lado do .exe ou na raiz do projeto em dev) para popular
+# os.environ ANTES de qualquer leitura de variável de ambiente abaixo.
+# Falha silenciosa se python-dotenv não estiver instalado ou .env não existir.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(APP_DIR / ".env")
+except ImportError:
+    pass
 
 try:
     from models import EstiloLegenda
@@ -42,7 +52,15 @@ class Settings:
         self.whisper_language = None  # None = auto-detect, ou "en", "pt", etc.
 
         self.ffmpeg_threads = 4
-        self.ffmpeg_preset = "medium"
+        self.ffmpeg_preset = "medium"  # legado — não usado pelo encoder novo
+
+        # Encoder de vídeo: "auto" detecta NVENC/QSV/AMF; força com
+        # "nvenc"/"qsv"/"amf"/"cpu". Ver core/encoder.py.
+        self.video_encoder = "auto"
+        # Pula re-encode de áudio em queimar_legendas quando input é AAC-LC.
+        self.audio_passthrough = True
+        # yt-dlp paralelismo em downloads HLS.
+        self.ytdlp_concurrent_fragments = 8
 
         self.max_retries = 3
         self.timeout = 300
@@ -81,13 +99,22 @@ class Settings:
                     self.language = data.get("language", self.language)
                     self.whisper_model = data.get("whisper_model", self.whisper_model)
                     self.whisper_device = data.get("whisper_device", self.whisper_device)
+                    self.video_encoder = data.get("video_encoder", self.video_encoder)
+                    self.audio_passthrough = data.get("audio_passthrough", self.audio_passthrough)
+                    self.ytdlp_concurrent_fragments = data.get(
+                        "ytdlp_concurrent_fragments", self.ytdlp_concurrent_fragments
+                    )
                     self.last_open_dir = data.get("last_open_dir", str(Path.home()))
-                    self.gemini_api_key = data.get("gemini_api_key", "")
+                    # API key: env wins (do .env ou shell). Fallback: config.json.
+                    env_key = os.environ.get("GEMINI_API_KEY", "").strip()
+                    self.gemini_api_key = env_key or data.get("gemini_api_key", "")
             except Exception as e:
                 print(f"Erro ao carregar config: {e}")
                 self.last_open_dir = str(Path.home())
+                self.gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
         else:
             self.last_open_dir = str(Path.home())
+            self.gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
 
     def save_config(self):
         """Salva configurações no arquivo JSON (user-writable)"""
@@ -98,6 +125,9 @@ class Settings:
             "language": self.language,
             "whisper_model": self.whisper_model,
             "whisper_device": self.whisper_device,
+            "video_encoder": self.video_encoder,
+            "audio_passthrough": self.audio_passthrough,
+            "ytdlp_concurrent_fragments": self.ytdlp_concurrent_fragments,
             "last_open_dir": self.last_open_dir,
             "gemini_api_key": self.gemini_api_key
         }

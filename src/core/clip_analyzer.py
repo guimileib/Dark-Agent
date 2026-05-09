@@ -178,11 +178,75 @@ class ClipAnalyzer:
     
     def _analisar_audio(self) -> Dict[int, float]:
         """
-        Analisa energia do áudio por segundo
-        Retorna dict {segundo: energia}
+        Analisa energia do áudio por segundo via astats em janelas de 1s.
+
+        Usa um único pass do ffmpeg: resample para 8kHz, força frames de 8000
+        samples (= 1 segundo cada) e pede astats com reset=1 para emitir RMS
+        por janela. Fallback para volumedetect global se astats falhar.
         """
+        duration = max(int(self.duracao_total), 1)
         try:
-            # Usar volumedetect do FFmpeg
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-i", str(self.video_path),
+                "-af", "aresample=8000,asetnsamples=n=8000:p=0,astats=metadata=1:reset=1",
+                "-f", "null",
+                "-",
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                **_SP_KW,
+            )
+
+            energia: Dict[int, float] = {}
+            in_overall = False
+            seg_idx = 0
+            for raw in result.stderr.splitlines():
+                line = raw.strip()
+                if "Overall" in line:
+                    in_overall = True
+                    continue
+                if in_overall and line.startswith("Channel:"):
+                    in_overall = False
+                    continue
+                if in_overall and "RMS level dB" in line:
+                    try:
+                        rms = float(line.split(":")[-1].strip())
+                    except ValueError:
+                        in_overall = False
+                        continue
+                    if rms != rms or rms == float("-inf"):
+                        score = 0.0
+                    else:
+                        # -60dB → 0, -10dB → 1
+                        score = float(np.clip((rms + 60) / 50, 0, 1))
+                    energia[seg_idx] = score
+                    seg_idx += 1
+                    in_overall = False
+
+            if not energia:
+                return self._fallback_audio_global()
+
+            # Preencher segundos faltantes com último valor conhecido
+            ultimo = next(iter(energia.values()))
+            for i in range(duration):
+                if i in energia:
+                    ultimo = energia[i]
+                else:
+                    energia[i] = ultimo
+            return energia
+
+        except Exception as e:
+            logger.warning(f"Erro ao analisar áudio (astats): {e}")
+            return self._fallback_audio_global()
+
+    def _fallback_audio_global(self) -> Dict[int, float]:
+        """Caminho de fallback: volumedetect global (mesmo score para todos os segundos)."""
+        try:
             cmd = [
                 "ffmpeg",
                 "-i", str(self.video_path),
@@ -190,7 +254,7 @@ class ClipAnalyzer:
                 "-f", "null",
                 "-"
             ]
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -227,35 +291,30 @@ class ClipAnalyzer:
         energia_audio: Dict[int, float]
     ) -> float:
         """
-        Calcula score de viralização para um clip
-        
-        Fatores considerados:
-        - Número de mudanças de cena (dinâmica visual)
-        - Movimento médio (engajamento)
-        - Energia de áudio (excitação)
-        - Duração ideal (30-45s é ótimo para shorts)
-        - Posicionamento (início e fim do vídeo tendem a ser melhores)
+        Calcula score de viralização para um clip.
+
+        Pesos atuais (movimento desativado por ser placeholder fixo):
+        - Mudanças de cena (0.30) — dinâmica visual
+        - Energia de áudio per-segundo (0.40) — excitação real do trecho
+        - Duração ideal (0.20) — sweet spot de shorts
+        - Posicionamento (0.10) — início/fim do vídeo
         """
         scores = []
-        
-        # 1. Mudanças de cena (peso: 0.25)
+
+        # 1. Mudanças de cena (peso: 0.30)
         cenas_no_clip = [c for c in mudancas_cena if inicio <= c <= fim]
         duracao = fim - inicio
         cenas_por_segundo = len(cenas_no_clip) / duracao if duracao > 0 else 0
         # Ideal: 0.1-0.3 cenas/segundo
         score_cenas = 1.0 - abs(cenas_por_segundo - 0.2) / 0.2
-        score_cenas = np.clip(score_cenas, 0, 1)
-        scores.append(score_cenas * 0.25)
-        
-        # 2. Movimento (peso: 0.20)
-        movimento_medio = np.mean([movimento.get(i, 0.5) for i in range(inicio, fim)])
-        scores.append(movimento_medio * 0.20)
-        
-        # 3. Energia de áudio (peso: 0.25)
-        energia_media = np.mean([energia_audio.get(i, 0.5) for i in range(inicio, fim)])
-        scores.append(energia_media * 0.25)
-        
-        # 4. Duração ideal (peso: 0.15)
+        score_cenas = float(np.clip(score_cenas, 0, 1))
+        scores.append(score_cenas * 0.30)
+
+        # 2. Energia de áudio per-segundo (peso: 0.40)
+        energia_media = float(np.mean([energia_audio.get(i, 0.5) for i in range(inicio, fim)]))
+        scores.append(energia_media * 0.40)
+
+        # 3. Duração ideal (peso: 0.20)
         # Shorts ideais: 15-60s, ótimo: 30-45s
         if 30 <= duracao <= 45:
             score_duracao = 1.0
@@ -265,19 +324,19 @@ class ClipAnalyzer:
             score_duracao = 1.0 - (duracao - 45) / 15 * 0.3
         else:
             score_duracao = 0.5
-        scores.append(score_duracao * 0.15)
-        
-        # 5. Posicionamento (peso: 0.15)
+        scores.append(score_duracao * 0.20)
+
+        # 4. Posicionamento (peso: 0.10)
         # Primeiros 30% e últimos 30% do vídeo tendem a ser melhores
-        posicao_relativa = inicio / self.duracao_total
+        posicao_relativa = inicio / self.duracao_total if self.duracao_total > 0 else 0.0
         if posicao_relativa <= 0.3 or posicao_relativa >= 0.7:
             score_posicao = 0.9
         else:
             score_posicao = 0.6
-        scores.append(score_posicao * 0.15)
-        
-        # Score final
-        return sum(scores)
+        scores.append(score_posicao * 0.10)
+
+        # Score final ∈ [0, 1]
+        return float(np.clip(sum(scores), 0.0, 1.0))
     
     def _gerar_razoes(
         self,

@@ -122,8 +122,22 @@ class VideoDownloader:
 
             full_cmd = base_cmd + cmd
 
-            # Adicionar flags para evitar hangs e ignorar erros de certificado
-            full_cmd.extend(["--socket-timeout", "30", "--no-check-certificate"])
+            # Paralelismo de fragmentos (HLS/DASH). Ler do settings com fallback
+            # seguro para 8 — sweet spot pra HLS residencial; valores >16
+            # tendem a derrubar em rate-limit de CDN.
+            try:
+                from config.settings import settings
+                concurrent_frags = max(1, int(getattr(settings, "ytdlp_concurrent_fragments", 8)))
+            except Exception:
+                concurrent_frags = 8
+
+            # Adicionar flags para evitar hangs, ignorar erros de cert e paralelizar.
+            full_cmd.extend([
+                "--socket-timeout", "30",
+                "--no-check-certificate",
+                "--concurrent-fragments", str(concurrent_frags),
+                "--http-chunk-size", "10M",
+            ])
 
             logger.debug(f"Executando: {' '.join(full_cmd)}")
 
