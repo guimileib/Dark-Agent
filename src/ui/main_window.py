@@ -264,8 +264,9 @@ class ProcessadorThread(QThread):
                         resultados["falha"].append((url, "Falha ao renderizar"))
                         continue
 
-                    # Aplicar marcador permanente, se solicitado
-                    marker = self.config.get("marker")
+                    # Aplicar marcador permanente per-URL, se solicitado
+                    markers = self.config.get("markers") or {}
+                    marker = markers.get(url)
                     if marker:
                         report_progress("Aplicando marcador...", 95)
                         marked_path = output_path.parent / f"{output_path.stem}_marked.mp4"
@@ -323,7 +324,7 @@ class BatchDownloadThread(QThread):
     def run(self):
         urls = self.config.get("urls", [])
         total = len(urls)
-        marker = self.config.get("marker")  # {"text": str, "position": str} ou None
+        markers = self.config.get("markers") or {}  # {url: {"text", "position"}}
         resultados = {"sucesso": [], "falha": []}
 
         try:
@@ -341,7 +342,8 @@ class BatchDownloadThread(QThread):
                     )
 
                     if sucesso:
-                        # Aplicar marcador permanente, se solicitado
+                        # Aplicar marcador permanente per-URL, se solicitado
+                        marker = markers.get(url)
                         if marker and caminho:
                             self.progresso.emit(
                                 f"Aplicando marcador no vídeo {i+1}/{total}...",
@@ -950,7 +952,7 @@ class MainWindow(QMainWindow):
             "urls": urls,
             "qualidade": qualidade,
             "pasta": pasta,
-            "marker": self.download_widget.get_marker(),
+            "markers": self.download_widget.get_markers(),
         }
 
         # Desabilitar botões
@@ -1008,7 +1010,7 @@ class MainWindow(QMainWindow):
             "urls": urls,
             "qualidade": qualidade,
             "pasta": pasta,
-            "marker": self.download_widget.get_marker(),
+            "markers": self.download_widget.get_markers(),
         }
         
         # Desabilitar UI

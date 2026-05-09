@@ -10,6 +10,9 @@ from PyQt6.QtGui import QColor
 from pathlib import Path
 
 
+_MARKER_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
+
 class DownloadWidget(QWidget):
     """Widget para configurar e iniciar download"""
 
@@ -19,6 +22,7 @@ class DownloadWidget(QWidget):
 
     def __init__(self):
         super().__init__()
+        self._loading_marker = False
         self.init_ui()
 
     # ------------------------------------------------------------------
@@ -224,23 +228,30 @@ class DownloadWidget(QWidget):
 
         container_layout.addLayout(grid_config)
 
-        # ── Marcador permanente (opcional) ───────────────────────────────
-        marker_label = QLabel("Marcador no Vídeo (Opcional)")
+        # ── Marcador permanente (por vídeo) ──────────────────────────────
+        marker_label = QLabel("Marcador no Vídeo (Por Vídeo)")
         marker_label.setObjectName("SectionTitle")
         container_layout.addWidget(marker_label)
 
         marker_subtitle = QLabel(
-            "Texto fixo queimado no vídeo (ex.: \"Episódio 5\"). Deixe vazio para não usar."
+            "Selecione um ou mais vídeos na fila acima e defina o texto a ser queimado "
+            "naquele(s) vídeo(s). Cada vídeo guarda seu próprio marcador."
         )
         marker_subtitle.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 4px;")
+        marker_subtitle.setWordWrap(True)
         container_layout.addWidget(marker_subtitle)
+
+        self.marker_status_label = QLabel("Selecione um vídeo da fila para configurar seu marcador.")
+        self.marker_status_label.setStyleSheet("color: #94a3b8; font-size: 11px; font-style: italic; margin-bottom: 2px;")
+        container_layout.addWidget(self.marker_status_label)
 
         marker_row = QHBoxLayout()
         marker_row.setSpacing(8)
 
         self.marker_entry = QLineEdit()
-        self.marker_entry.setPlaceholderText("Ex.: Episódio 1")
+        self.marker_entry.setPlaceholderText("Ex.: Episódio 1 — selecione um vídeo na fila")
         self.marker_entry.setMinimumHeight(42)
+        self.marker_entry.setEnabled(False)
         self.marker_entry.setStyleSheet("""
             QLineEdit {
                 background-color: rgba(15, 23, 42, 0.8);
@@ -265,9 +276,16 @@ class DownloadWidget(QWidget):
         self.marker_pos_combo.addItem("Embaixo Centro",   "bottom_center")
         self.marker_pos_combo.addItem("Embaixo Esquerda", "bottom_left")
         self.marker_pos_combo.setMinimumHeight(42)
+        self.marker_pos_combo.setEnabled(False)
         marker_row.addWidget(self.marker_pos_combo, 1)
 
         container_layout.addLayout(marker_row)
+
+        # Sinais: editar marcador grava no(s) item(s) selecionado(s);
+        # mudar seleção carrega o marcador correspondente nos campos.
+        self.marker_entry.textChanged.connect(self._on_marker_edited)
+        self.marker_pos_combo.currentIndexChanged.connect(self._on_marker_edited)
+        self.url_list.itemSelectionChanged.connect(self._on_url_selection_changed)
 
         # ── Botões de ação ────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -361,24 +379,119 @@ class DownloadWidget(QWidget):
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(Qt.CheckState.Checked)
         item.setData(Qt.ItemDataRole.UserRole, url)
-
-        # Exibir só o domínio + path curto p/ legibilidade
-        display = url if len(url) <= 60 else url[:57] + "..."
-        item.setText(f"🔗  {display}")
-        item.setToolTip(url)
+        item.setData(_MARKER_ROLE, None)
         item.setForeground(QColor("#e2e8f0"))
+
+        self._refresh_item_display(item)
 
         self.url_list.addItem(item)
         self.url_list.scrollToBottom()
+
+    def _refresh_item_display(self, item: QListWidgetItem):
+        """Atualiza o texto do item refletindo URL e marcador (se houver)."""
+        url = item.data(Qt.ItemDataRole.UserRole) or ""
+        marker = item.data(_MARKER_ROLE)
+
+        display = url if len(url) <= 55 else url[:52] + "..."
+        text = f"🔗  {display}"
+        if marker and marker.get("text"):
+            tag = marker["text"]
+            tag_short = tag if len(tag) <= 22 else tag[:19] + "..."
+            text += f"   🏷 {tag_short}"
+        item.setText(text)
+
+        tooltip = url
+        if marker and marker.get("text"):
+            pos_label = self._position_label(marker.get("position", "top_right"))
+            tooltip += f"\n\nMarcador: \"{marker['text']}\" ({pos_label})"
+        item.setToolTip(tooltip)
+
+    def _position_label(self, key: str) -> str:
+        """Retorna o label legível de uma chave de posição."""
+        for i in range(self.marker_pos_combo.count()):
+            if self.marker_pos_combo.itemData(i) == key:
+                return self.marker_pos_combo.itemText(i)
+        return key
+
+    def _selectable_selected_items(self) -> list[QListWidgetItem]:
+        """Itens reais (não placeholder) atualmente selecionados."""
+        return [
+            it for it in self.url_list.selectedItems()
+            if it.flags() & Qt.ItemFlag.ItemIsUserCheckable
+        ]
+
+    def _on_url_selection_changed(self):
+        """Carrega o marcador do(s) item(s) selecionado(s) nos campos do editor."""
+        items = self._selectable_selected_items()
+
+        self._loading_marker = True
+        try:
+            if not items:
+                self.marker_entry.clear()
+                self.marker_entry.setEnabled(False)
+                self.marker_pos_combo.setEnabled(False)
+                self.marker_entry.setPlaceholderText("Ex.: Episódio 1 — selecione um vídeo na fila")
+                self.marker_status_label.setText("Selecione um vídeo da fila para configurar seu marcador.")
+                return
+
+            self.marker_entry.setEnabled(True)
+            self.marker_pos_combo.setEnabled(True)
+
+            markers = [(it.data(_MARKER_ROLE) or {}) for it in items]
+            same = all(m == markers[0] for m in markers)
+
+            if same:
+                m = markers[0]
+                self.marker_entry.setText(m.get("text", ""))
+                self.marker_entry.setPlaceholderText("Ex.: Episódio 1")
+                pos = m.get("position", "top_right")
+                idx = self.marker_pos_combo.findData(pos)
+                if idx >= 0:
+                    self.marker_pos_combo.setCurrentIndex(idx)
+
+                if len(items) == 1:
+                    url = items[0].data(Qt.ItemDataRole.UserRole) or ""
+                    short = url if len(url) <= 50 else url[:47] + "..."
+                    self.marker_status_label.setText(f"Editando marcador de: {short}")
+                else:
+                    self.marker_status_label.setText(
+                        f"Editando {len(items)} vídeos selecionados (mesmo marcador)."
+                    )
+            else:
+                self.marker_entry.clear()
+                self.marker_entry.setPlaceholderText("(múltiplos valores) — digite para sobrescrever todos")
+                self.marker_status_label.setText(
+                    f"{len(items)} vídeos com marcadores diferentes — editar aqui sobrescreve todos."
+                )
+        finally:
+            self._loading_marker = False
+
+    def _on_marker_edited(self, *_):
+        """Persiste o marcador atual nos itens selecionados da fila."""
+        if self._loading_marker:
+            return
+        items = self._selectable_selected_items()
+        if not items:
+            return
+
+        text = self.marker_entry.text().strip()
+        position = self.marker_pos_combo.currentData() or "top_right"
+        marker = {"text": text, "position": position} if text else None
+
+        for it in items:
+            it.setData(_MARKER_ROLE, marker)
+            self._refresh_item_display(it)
 
     def _remove_selected_urls(self):
         for item in self.url_list.selectedItems():
             self.url_list.takeItem(self.url_list.row(item))
         self._ensure_placeholder()
+        self._on_url_selection_changed()
 
     def _clear_url_list(self):
         self.url_list.clear()
         self._ensure_placeholder()
+        self._on_url_selection_changed()
 
     def _ensure_placeholder(self):
         """Mostra placeholder se lista estiver vazia"""
@@ -441,23 +554,29 @@ class DownloadWidget(QWidget):
     # ------------------------------------------------------------------
 
     def get_configuracao(self) -> dict:
-        """Retorna configuração atual (URLs checadas + qualidade + pasta + marcador)"""
+        """Retorna configuração atual (URLs checadas + qualidade + pasta + marcadores per-URL)"""
         return {
             "urls": self._get_checked_urls(),
             "qualidade": self.qualidade_combo.currentText(),
             "pasta": Path(self.pasta_label.text()),
-            "marker": self.get_marker(),
+            "markers": self.get_markers(),
         }
 
-    def get_marker(self) -> dict | None:
-        """Retorna {"text": str, "position": str} se o marcador foi preenchido, senão None."""
-        text = self.marker_entry.text().strip()
-        if not text:
-            return None
-        return {
-            "text": text,
-            "position": self.marker_pos_combo.currentData() or "top_right",
-        }
+    def get_markers(self) -> dict:
+        """Retorna {url: {"text": str, "position": str}} apenas para URLs com marcador definido."""
+        out: dict = {}
+        for i in range(self.url_list.count()):
+            item = self.url_list.item(i)
+            if not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+                continue
+            marker = item.data(_MARKER_ROLE)
+            url = item.data(Qt.ItemDataRole.UserRole)
+            if marker and url and marker.get("text"):
+                out[url] = {
+                    "text": marker["text"],
+                    "position": marker.get("position", "top_right"),
+                }
+        return out
 
     def set_urls(self, urls: list[str]):
         """Adiciona URLs programaticamente (ex: chamado de outro widget)"""

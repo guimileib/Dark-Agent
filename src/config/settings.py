@@ -42,7 +42,15 @@ class Settings:
         self.whisper_language = None  # None = auto-detect, ou "en", "pt", etc.
 
         self.ffmpeg_threads = 4
-        self.ffmpeg_preset = "medium"
+        self.ffmpeg_preset = "medium"  # legado — não usado pelo encoder novo
+
+        # Encoder de vídeo: "auto" detecta NVENC/QSV/AMF; força com
+        # "nvenc"/"qsv"/"amf"/"cpu". Ver core/encoder.py.
+        self.video_encoder = "auto"
+        # Pula re-encode de áudio em queimar_legendas quando input é AAC-LC.
+        self.audio_passthrough = True
+        # yt-dlp paralelismo em downloads HLS.
+        self.ytdlp_concurrent_fragments = 8
 
         self.max_retries = 3
         self.timeout = 300
@@ -81,6 +89,11 @@ class Settings:
                     self.language = data.get("language", self.language)
                     self.whisper_model = data.get("whisper_model", self.whisper_model)
                     self.whisper_device = data.get("whisper_device", self.whisper_device)
+                    self.video_encoder = data.get("video_encoder", self.video_encoder)
+                    self.audio_passthrough = data.get("audio_passthrough", self.audio_passthrough)
+                    self.ytdlp_concurrent_fragments = data.get(
+                        "ytdlp_concurrent_fragments", self.ytdlp_concurrent_fragments
+                    )
                     self.last_open_dir = data.get("last_open_dir", str(Path.home()))
                     self.gemini_api_key = data.get("gemini_api_key", "")
             except Exception as e:
@@ -98,6 +111,9 @@ class Settings:
             "language": self.language,
             "whisper_model": self.whisper_model,
             "whisper_device": self.whisper_device,
+            "video_encoder": self.video_encoder,
+            "audio_passthrough": self.audio_passthrough,
+            "ytdlp_concurrent_fragments": self.ytdlp_concurrent_fragments,
             "last_open_dir": self.last_open_dir,
             "gemini_api_key": self.gemini_api_key
         }

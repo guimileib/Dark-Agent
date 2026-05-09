@@ -398,24 +398,28 @@ class ClipWidget(QWidget):
         self.results_expanded = False
         self.original_top_height = 0
         
-        self.btn_expand = QPushButton("Ampliar")
+        self.btn_expand = QPushButton("⛶")
         self.btn_expand.setCheckable(True)
+        self.btn_expand.setFixedSize(32, 32)
+        self.btn_expand.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_expand.setToolTip("Ampliar área dos clips")
         self.btn_expand.setStyleSheet("""
             QPushButton {
-                background-color: rgba(59, 130, 246, 0.12);
-                border: 1.5px solid rgba(59, 130, 246, 0.3);
-                color: #60a5fa;
-                border-radius: 10px;
-                padding: 6px 14px;
+                background-color: rgba(59, 130, 246, 0.10);
+                border: 1px solid rgba(59, 130, 246, 0.25);
+                color: #93c5fd;
+                border-radius: 8px;
+                padding: 0;
+                font-size: 16px;
                 font-weight: 700;
-                font-size: 12px;
             }
             QPushButton:hover {
-                background-color: rgba(59, 130, 246, 0.2);
+                background-color: rgba(59, 130, 246, 0.25);
                 border-color: #3b82f6;
+                color: white;
             }
             QPushButton:checked {
-                background-color: #3b82f6;
+                background-color: rgba(59, 130, 246, 0.45);
                 color: white;
                 border-color: #3b82f6;
             }
@@ -481,13 +485,15 @@ class ClipWidget(QWidget):
             self.original_top_height = self.top_container.height()
             self.anim.setStartValue(self.original_top_height)
             self.anim.setEndValue(0)
-            self.btn_expand.setText("🔽 Restaurar")
+            self.btn_expand.setText("🗗")
+            self.btn_expand.setToolTip("Restaurar tamanho original")
         else:
             # Restaurar topo
             self.anim.setStartValue(self.top_container.height())
             target_h = self.original_top_height if self.original_top_height > 0 else self.top_container.sizeHint().height()
             self.anim.setEndValue(target_h)
-            self.btn_expand.setText("🔎 Ampliar")
+            self.btn_expand.setText("⛶")
+            self.btn_expand.setToolTip("Ampliar área dos clips")
 
             # Ao terminar de restaurar, resetar para permitir redimensionamento
             self.anim.finished.connect(lambda: self.top_container.setMaximumHeight(16777215))

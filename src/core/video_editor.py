@@ -40,6 +40,65 @@ def _probe_duration(video_path: Path) -> Optional[float]:
     return None
 
 
+def _probe_audio_codec(video_path: Path) -> tuple:
+    """Retorna (codec_name, profile, sample_rate) do primeiro stream de áudio.
+
+    Usado pra decidir se podemos pular o re-encode de áudio em queimar_legendas.
+    Tudo em None se ffprobe falhar.
+    """
+    sp_kw: dict = {}
+    if sys.platform == "win32":
+        sp_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=codec_name,profile,sample_rate",
+                "-of", "default=nokey=1:noprint_wrappers=1",
+                str(video_path),
+            ],
+            capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL, **sp_kw,
+        )
+        if result.returncode != 0:
+            return (None, None, None)
+        # Saída crua: cada valor numa linha, na ordem solicitada
+        # (codec_name, profile, sample_rate). Profile pode estar ausente.
+        lines = [ln.strip() for ln in (result.stdout or "").splitlines() if ln.strip()]
+        codec = lines[0] if len(lines) > 0 else None
+        profile = lines[1] if len(lines) > 1 else None
+        rate_str = lines[2] if len(lines) > 2 else None
+        try:
+            rate = int(rate_str) if rate_str else None
+        except ValueError:
+            rate = None
+        return (codec, profile, rate)
+    except (OSError, subprocess.TimeoutExpired):
+        return (None, None, None)
+
+
+def _audio_args_for(video_path: Path, allow_passthrough: bool) -> list:
+    """Decide entre `-c:a copy` (passthrough) e `-c:a aac -b:a 192k` (re-encode).
+
+    Passthrough só quando: aac-lc + sample rate 44.1k ou 48k.
+    Sample rates exóticos (8k, HE-AAC, etc.) caem pro re-encode pra evitar
+    arquivos rejeitados pelo TikTok/YouTube.
+    """
+    if not allow_passthrough:
+        return ["-c:a", "aac", "-b:a", "192k"]
+    codec, profile, rate = _probe_audio_codec(video_path)
+    profile_norm = (profile or "").lower()
+    if (
+        codec == "aac"
+        and profile_norm in ("", "lc", "aac-lc")
+        and rate in (44100, 48000)
+    ):
+        return ["-c:a", "copy"]
+    return ["-c:a", "aac", "-b:a", "192k"]
+
+
 def _run_ffmpeg_with_progress(
     cmd: list,
     *,
@@ -238,6 +297,17 @@ class VideoEditor:
             subtitle_str = _ffmpeg_escape_path(str(tmp_ass))
             duration_sec = _probe_duration(video_path)
 
+            # Encoder dinâmico (NVENC / QSV / libx264) + audio passthrough
+            from core.encoder import get_video_encoder_args, get_active_encoder_label
+            try:
+                from config.settings import settings as _settings
+                allow_pass = bool(getattr(_settings, "audio_passthrough", True))
+            except Exception:
+                allow_pass = True
+
+            video_args = get_video_encoder_args(crf_equiv=23)
+            audio_args = _audio_args_for(video_path, allow_passthrough=allow_pass)
+
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
@@ -245,16 +315,17 @@ class VideoEditor:
                 "-loglevel", "error",
                 "-i", str(video_path),
                 "-vf", f"subtitles='{subtitle_str}'",
-                "-c:v", "libx264",
-                "-preset", preset,
-                "-crf", "23",
-                "-c:a", "aac",
-                "-b:a", "192k",
+                *video_args,
+                *audio_args,
                 "-progress", "pipe:1",
                 "-y",
                 str(output_path),
             ]
 
+            logger.info(
+                f"Encoder ativo: {get_active_encoder_label()}; "
+                f"áudio: {audio_args[1] if len(audio_args) > 1 else '?'}"
+            )
             logger.info(f"Comando FFmpeg: {' '.join(cmd)}")
             logger.info(f"Arquivo de saída esperado: {output_path} (duração: {duration_sec}s)")
 
@@ -318,13 +389,12 @@ class VideoEditor:
 
         drawtext = "drawtext=" + ":".join(drawtext_parts)
 
+        from core.encoder import get_video_encoder_args, get_active_encoder_label
         cmd = [
             "ffmpeg",
             "-i", str(video_path),
             "-vf", drawtext,
-            "-c:v", "libx264",
-            "-preset", preset,
-            "-crf", "20",
+            *get_video_encoder_args(crf_equiv=20),
             "-c:a", "copy",
             "-y",
             str(output_path),
@@ -334,7 +404,10 @@ class VideoEditor:
         if sys.platform == "win32":
             sp_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-        logger.info(f"Queimando marcador '{texto}' em {video_path.name} (pos={posicao})")
+        logger.info(
+            f"Queimando marcador '{texto}' em {video_path.name} "
+            f"(pos={posicao}, encoder={get_active_encoder_label()})"
+        )
         try:
             resultado = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=3600,
