@@ -5,7 +5,6 @@ import json
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Optional
-import tempfile
 
 logger = logging.getLogger(__name__)
 

@@ -79,6 +79,7 @@ CACHE_DIR = APP_DIR / "cache"
 MODELS_DIR = APP_DIR / "models"
 ACCOUNTS_DIR = APP_DIR / "accounts"
 LOGS_DIR = APP_DIR / "logs"
+TEMP_DIR = APP_DIR / "temp"  # arquivos transitórios da app (preview frames, .ass copies, etc.)
 
 # Convenções de subpastas dentro de qualquer pasta de output (a do app ou
 # a que o usuário escolher pela UI). Uso: output_subdir(base, OUTPUT_RAW).
@@ -99,7 +100,7 @@ FFMPEG_DIR = APP_DIR / "ffmpeg"
 
 def ensure_dirs() -> None:
     """Create all mutable directories if they don't exist."""
-    for d in (OUTPUT_DIR, CACHE_DIR, MODELS_DIR, ACCOUNTS_DIR, LOGS_DIR, USER_CONFIG_DIR):
+    for d in (OUTPUT_DIR, CACHE_DIR, MODELS_DIR, ACCOUNTS_DIR, LOGS_DIR, TEMP_DIR, USER_CONFIG_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
