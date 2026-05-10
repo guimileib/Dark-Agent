@@ -7,7 +7,6 @@ from .ffmpeg_utils import (
     obter_resolucao_video,
     formatar_tempo
 )
-from .file_manager import FileManager
 
 __all__ = [
     'verificar_ffmpeg_instalado',
@@ -15,5 +14,4 @@ __all__ = [
     'obter_duracao_video',
     'obter_resolucao_video',
     'formatar_tempo',
-    'FileManager'
 ]

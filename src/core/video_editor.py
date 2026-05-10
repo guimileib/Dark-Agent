@@ -3,12 +3,13 @@
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import uuid
 import logging
 from pathlib import Path
 from typing import Callable, Optional, List
+
+from config.paths import TEMP_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +288,8 @@ class VideoEditor:
         # apóstrofos no caminho do .ass — testado com 5 variantes de escape
         # e nenhuma resolve. Copiamos o .ass para um path ASCII-safe.
         try:
-            tmp_ass = Path(tempfile.gettempdir()) / f"darkagent_sub_{uuid.uuid4().hex[:12]}.ass"
+            TEMP_DIR.mkdir(parents=True, exist_ok=True)
+            tmp_ass = TEMP_DIR / f"darkagent_sub_{uuid.uuid4().hex[:12]}.ass"
             shutil.copy2(subtitle_path, tmp_ass)
         except OSError as e:
             logger.error(f"Falha ao copiar .ass para temp: {e}")

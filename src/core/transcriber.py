@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Optional, Dict
 import torch
 
+from config.paths import MODELS_DIR
+
 logger = logging.getLogger(__name__)
 
 # Cache global de modelos. Sem lock, duas threads de batch com o mesmo modelo
@@ -99,10 +101,13 @@ class Transcriber:
                 try:
                     import whisper
 
+                    # Modelos Whisper (500MB–3GB cada) ficam em MODELS_DIR
+                    # ao lado do .exe — não em ~/.cache/whisper/.
+                    MODELS_DIR.mkdir(parents=True, exist_ok=True)
                     MODEL_CACHE[cache_key] = whisper.load_model(
                         self.modelo_nome,
                         device=self.device,
-                        download_root=None,
+                        download_root=str(MODELS_DIR),
                     )
                     logger.info("Modelo carregado com sucesso")
                 except Exception as e:

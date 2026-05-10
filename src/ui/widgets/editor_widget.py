@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import tempfile
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
@@ -16,6 +15,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget,
 )
 
+from config.paths import TEMP_DIR
 from core.overlay_renderer import OverlayRenderer
 from models.overlay import OverlayElemento, OverlayTemplate
 
@@ -90,7 +90,8 @@ class EditorWidget(QWidget):
         self._video_path: Path | None = None
         self._render_thread: OverlayRenderThread | None = None
         self._frame_thread: FrameExtractThread | None = None
-        self._frame_tmp = Path(tempfile.gettempdir()) / "darkagent_editor_frame.png"
+        TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        self._frame_tmp = TEMP_DIR / "darkagent_editor_frame.png"
         self._updating_ui = False  # guard against feedback loops
         self._init_ui()
 
