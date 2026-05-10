@@ -1,6 +1,6 @@
 """DarkAgent Pro v2.0 - Sistema de processamento de vídeos com IA"""
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 __author__ = "Guilherme"
 __email__ = "suporte@darkagent.pro"
 
