@@ -23,8 +23,8 @@ Sistema desktop profissional para processamento de vídeos do YouTube com IA.
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/seu-usuario/darkagent-pro-v2.git
-cd darkagent-pro-v2
+git clone https://github.com/guimileib/Dark-Agent.git
+cd Dark-Agent
 
 # 2. Crie ambiente virtual
 python -m venv venv
@@ -39,15 +39,58 @@ copy .env.example .env
 # Edite .env com suas preferências
 
 # 5. Execute
-python src/main.py
-
-# 6. (Opcional) Crie executável
-pyinstaller --onefile --windowed src/main.py --name DarkAgentPro
-
-# 7. (Opcional) Rebuild com PyInstaller
-pyinstaller DarkAgentLauncher.spec --clean
-
+python -m src.main
 ```
+
+## 📦 Gerar o Launcher (.exe)
+
+O executável distribuído é o `DarkAgentLauncher.exe`, gerado **sempre** a partir
+do `DarkAgentLauncher.spec` (nunca use `pyinstaller --onefile src/main.py` — o
+`.spec` contém `pathex`, `collect_submodules` e `hiddenimports` obrigatórios;
+sem eles o bundle sai incompleto e quebra com `ModuleNotFoundError`).
+
+### Build local (para testar)
+
+```bash
+# Com o venv ativado e dependências instaladas:
+pip install pyinstaller
+pyinstaller DarkAgentLauncher.spec --clean --noconfirm
+
+# Artefato final:
+dist\DarkAgentLauncher.exe
+```
+
+### Release oficial (com auto-update)
+
+O build de release é feito pelo GitHub Actions (`.github/workflows/release.yml`).
+**Importante:** merge para `main` NÃO publica release — só o push de tag publica.
+
+```bash
+# 1. Suba a versão em src/__init__.py (ex.: 2.0.1 -> 2.0.2)
+#    __version__ = "2.0.2"
+
+# 2. Commit e push
+git add src/__init__.py
+git commit -m "chore: bump version 2.0.1 -> 2.0.2"
+git push
+
+# 3. Crie e envie a tag (dispara o workflow: pytest -> build -> release)
+git tag v2.0.2
+git push origin v2.0.2
+```
+
+O workflow roda os testes, gera o `.exe` e publica em **Releases** com o asset
+`DarkAgentLauncher.exe`. Alternativa sem terminal: aba *Actions* → workflow
+*Build and Release Windows Executable* → *Run workflow* → informe a tag.
+
+### Como o auto-update funciona
+
+Ao abrir, o app consulta a release mais recente em
+`github.com/guimileib/Dark-Agent/releases` e compara a tag com o
+`__version__` embutido no `.exe`. Se a release for mais nova, oferece baixar e
+aplicar. Ou seja: **o update só chega para os usuários depois de publicar uma
+tag nova com `__version__` maior** — commits na `main` sozinhos não geram
+atualização. Falhas na checagem ficam registradas em `logs/`.
 
 ## 📖 Como Usar
 

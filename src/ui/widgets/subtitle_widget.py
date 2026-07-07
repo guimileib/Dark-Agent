@@ -2,19 +2,14 @@
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
-    QLabel, QScrollArea, QGroupBox, QComboBox, QGridLayout, QSlider, QFrame,
+    QLabel, QScrollArea, QComboBox, QGridLayout, QFrame,
     QColorDialog, QListWidget, QListWidgetItem, QFileDialog, QAbstractItemView,
     QSizePolicy
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QThread, QSize
-from PyQt6.QtGui import QPixmap, QColor, QIcon, QPainter, QFont, QPen, QBrush, QLinearGradient
+from PyQt6.QtGui import QPixmap, QColor, QIcon, QPainter, QFont, QPen, QBrush
 from pathlib import Path
 import logging
-
-try:
-    from config.settings import settings
-except ImportError:
-    from ...config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -119,62 +114,9 @@ class SubtitleWidget(QWidget):
         left_layout.setContentsMargins(20, 16, 20, 20)
         left_layout.setSpacing(12)
 
-        # ── Logo do Software ────────────────────────────────────────────────
-        logo_frame = QFrame()
-        logo_frame.setStyleSheet("""
-            QFrame {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 rgba(59,130,246,0.15), stop:1 rgba(139,92,246,0.15));
-                border-radius: 12px;
-                border: 1px solid rgba(59,130,246,0.3);
-            }
-        """)
-        logo_frame_layout = QHBoxLayout(logo_frame)
-        logo_frame_layout.setContentsMargins(12, 10, 12, 10)
-        logo_frame_layout.setSpacing(10)
-
-        # Carregar ícone do logo usando settings já importado no topo
-        icon_path = settings.assets_dir / "icon.png"
-        lbl_logo_img = QLabel()
-        if icon_path.exists():
-            pix = QPixmap(str(icon_path)).scaled(
-                42, 42,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            lbl_logo_img.setPixmap(pix)
-        else:
-            lbl_logo_img.setText("🎬")
-            lbl_logo_img.setStyleSheet("font-size: 30px;")
-        lbl_logo_img.setFixedSize(44, 44)
-        logo_frame_layout.addWidget(lbl_logo_img)
-
-        logo_text_layout = QVBoxLayout()
-        logo_text_layout.setSpacing(0)
-        lbl_app_name = QLabel("DarkAgent Pro")
-        lbl_app_name.setStyleSheet("""
-            color: white;
-            font-size: 16px;
-            font-weight: bold;
-            font-family: 'Segoe UI', sans-serif;
-            background: transparent;
-            border: none;
-        """)
-        lbl_app_subtitle = QLabel("AI Video Studio · Legendas")
-        lbl_app_subtitle.setStyleSheet("""
-            color: #7dd3fc;
-            font-size: 11px;
-            font-family: 'Segoe UI', sans-serif;
-            background: transparent;
-            border: none;
-        """)
-        logo_text_layout.addWidget(lbl_app_name)
-        logo_text_layout.addWidget(lbl_app_subtitle)
-        logo_frame_layout.addLayout(logo_text_layout)
-        logo_frame_layout.addStretch()
-        left_layout.addWidget(logo_frame)
-
         # ── Seleção de Vídeos ────────────────────────────────────────────────
+        # (o banner de logo que ficava aqui foi removido: duplicava o header
+        # da janela e roubava ~70px de altura do grid de estilos)
         videos_titulo = QLabel("📂  Vídeos para Processar")
         videos_titulo.setStyleSheet("""
             color: white;
@@ -187,8 +129,8 @@ class SubtitleWidget(QWidget):
         # Lista de vídeos (agora no painel esquerdo, mais visível)
         self.video_list = QListWidget()
         self.video_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.video_list.setMinimumHeight(100)
-        self.video_list.setMaximumHeight(160)
+        self.video_list.setMinimumHeight(90)
+        self.video_list.setMaximumHeight(130)
         self.video_list.setStyleSheet("""
             QListWidget {
                 background-color: rgba(15, 23, 42, 0.8);
@@ -338,10 +280,13 @@ class SubtitleWidget(QWidget):
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background: transparent;")
         grid_layout = QGridLayout(scroll_content)
-        grid_layout.setSpacing(15)
-        
-        # Criar botões para cada estilo em grid
+        grid_layout.setSpacing(10)
+        grid_layout.setContentsMargins(0, 0, 6, 0)
+
+        # Criar botões para cada estilo em grid — 3 colunas fluidas: os cards
+        # esticam na largura disponível em vez de deixar vazio à direita.
         self.botoes_estilos = {}
+        colunas = 3
 
         row, col = 0, 0
         for estilo in self.estilos:
@@ -350,10 +295,13 @@ class SubtitleWidget(QWidget):
             btn = QToolButton()
             btn.setText(nome_simples)
             btn.setCheckable(True)
-            btn.setFixedSize(130, 82)
+            btn.setFixedHeight(78)
+            btn.setMinimumWidth(110)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             btn.setIconSize(QSize(90, 38))
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(estilo.nome)
             btn.setProperty("nome_simples", nome_simples)
             btn.setStyleSheet("""
                 QToolButton {
@@ -381,13 +329,17 @@ class SubtitleWidget(QWidget):
             self.botoes_estilos[estilo.id] = btn
 
             col += 1
-            if col >= 2:
+            if col >= colunas:
                 col = 0
                 row += 1
-        
+
         grid_layout.setRowStretch(row + 1, 1)
         scroll.setWidget(scroll_content)
-        left_layout.addWidget(scroll)
+        scroll.setMinimumHeight(180)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # stretch=1: o grid de estilos fica com TODA a altura sobrando do
+        # painel esquerdo (antes ele era o item mais espremido da coluna).
+        left_layout.addWidget(scroll, 1)
         
         layout.addWidget(left_container, 4)  # 40% width
         

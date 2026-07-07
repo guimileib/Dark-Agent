@@ -5,14 +5,18 @@ from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton,
-    QProgressBar, QLabel, QMessageBox, QTabWidget, QApplication
+    QProgressBar, QLabel, QMessageBox, QTabWidget, QApplication,
+    QScrollArea, QFrame
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon
 
 from config.settings import settings
-from config.paths import APP_DIR, output_subdir, OUTPUT_RAW, OUTPUT_FINAL, OUTPUT_TEMP
-from ui.widgets import DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget, EditorWidget
+from config.paths import APP_DIR, output_subdir, OUTPUT_RAW, OUTPUT_FINAL, OUTPUT_TEMP, OUTPUT_CLIPS
+from ui.widgets import (
+    DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget, EditorWidget,
+    CompilationWidget,
+)
 from core import (
     VideoDownloader, VideoValidator, Transcriber,
     SubtitleGenerator, VideoEditor, PreviewRenderer
@@ -58,7 +62,10 @@ class UpdateCheckerThread(QThread):
             )
 
             if resp.status_code == 404:
-                logger.debug("Nenhum release publicado ainda no repositório.")
+                logger.info(
+                    "Update check: nenhum release publicado (ou repositório "
+                    f"privado/renomeado): {GITHUB_REPO}"
+                )
                 return
             resp.raise_for_status()
 
@@ -69,7 +76,10 @@ class UpdateCheckerThread(QThread):
                 return
 
             if not _is_newer(tag, __version__):
-                logger.debug(f"Versão atual ({__version__}) >= release mais recente ({tag}).")
+                logger.info(
+                    f"Update check: já na versão mais recente "
+                    f"(local {__version__} >= release {tag})."
+                )
                 return
 
             asset = next(
@@ -86,7 +96,9 @@ class UpdateCheckerThread(QThread):
                 data.get("body") or "",
             )
         except Exception as e:
-            logger.debug(f"Aviso - Não foi possível verificar atualizações: {e}")
+            # warning (não debug): sem isso é impossível diagnosticar o update
+            # check em outra máquina olhando o log.
+            logger.warning(f"Não foi possível verificar atualizações: {e}")
 
 
 class PreviewGeneratorThread(QThread):
@@ -186,6 +198,7 @@ class ProcessadorThread(QThread):
                 report_progress("Iniciando...", 0)
 
                 audio_path: Optional[Path] = None
+                ass_path: Optional[Path] = None
                 try:
                     # Subpastas semânticas dentro da pasta de output do usuário.
                     # Mantém raw / final / temp separados em vez de tudo flat.
@@ -303,13 +316,14 @@ class ProcessadorThread(QThread):
                     logger.error(f"Erro ao processar {url}: {e}")
                     resultados["falha"].append((url, str(e)))
                 finally:
-                    # Sempre limpar o .wav temporário (vários GB em vídeos longos),
-                    # mesmo em caso de erro ou cancelamento.
-                    if audio_path is not None:
-                        try:
-                            audio_path.unlink(missing_ok=True)
-                        except OSError as e:
-                            logger.warning(f"Falha ao remover temp audio {audio_path}: {e}")
+                    # Sempre limpar temporários (.wav de vários GB e o .ass já
+                    # queimado no vídeo), mesmo em caso de erro ou cancelamento.
+                    for tmp in (audio_path, ass_path):
+                        if tmp is not None:
+                            try:
+                                tmp.unlink(missing_ok=True)
+                            except OSError as e:
+                                logger.warning(f"Falha ao remover temp {tmp}: {e}")
 
             self.progresso.emit("Processamento concluído!", 100)
             self.concluido.emit(resultados)
@@ -675,14 +689,17 @@ class MainWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         # Styling is now handled by modern_theme.qss
         
-        # Aba 1: Download
-        tab_download = QWidget()
-        layout_download = QVBoxLayout(tab_download)
+        # Aba 1: Download — dentro de QScrollArea: se a janela ficar menor que
+        # o conteúdo, aparece scrollbar em vez de widgets se sobrepondo.
         self.download_widget = DownloadWidget()
         self.download_widget.download_video_apenas.connect(self.baixar_video_apenas)
         self.download_widget.download_e_legendar.connect(self.iniciar_fluxo_completo)
-        layout_download.addWidget(self.download_widget)
-        self.tab_widget.addTab(tab_download, "Download")
+        scroll_download = QScrollArea()
+        scroll_download.setWidgetResizable(True)
+        scroll_download.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_download.setStyleSheet("QScrollArea { background: transparent; }")
+        scroll_download.setWidget(self.download_widget)
+        self.tab_widget.addTab(scroll_download, "Download")
         
         # Aba 2: Cortes Inteligentes  
         tab_clips = QWidget()
@@ -710,9 +727,14 @@ class MainWindow(QMainWindow):
         self.upload_widget = UploadWidget()
         self.tab_widget.addTab(self.upload_widget, "Upload")
 
-        # Aba Editor (Overlay Editor)
+        # Aba Editor: sub-abas Overlays (editor original) e Compilação
+        # (montador "Adivinhe a Música" / rankings para TikTok e Shorts)
         self.editor_widget = EditorWidget()
-        self.tab_widget.addTab(self.editor_widget, "Editor")
+        self.compilation_widget = CompilationWidget()
+        editor_tabs = QTabWidget()
+        editor_tabs.addTab(self.editor_widget, "Overlays")
+        editor_tabs.addTab(self.compilation_widget, "Compilação")
+        self.tab_widget.addTab(editor_tabs, "Editor")
 
         # NOTE: previews are generated asynchronously by iniciar_geracao_previews()
         # in __init__. Do NOT call gerar_previews_iniciais() here (it was synchronous
@@ -1102,9 +1124,7 @@ class MainWindow(QMainWindow):
                 self.show_centered_message("Aviso", "Informações do clip incompletas!", QMessageBox.Icon.Warning)
                 return
             
-            # Criar pasta de saída se não existir
-            output_dir = settings.output_dir / "clips"
-            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = output_subdir(settings.output_dir, OUTPUT_CLIPS)
             
             # Nome do arquivo de saída
             nome_video = Path(video_path).stem

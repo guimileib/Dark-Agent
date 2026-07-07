@@ -2,6 +2,7 @@
 
 import subprocess
 import logging
+import re
 import sys
 import json
 from pathlib import Path
@@ -68,6 +69,12 @@ class VideoDownloader:
                 tempo = time.time() - inicio
 
                 if caminho and caminho.exists():
+                    if not self._tem_video_e_audio(caminho):
+                        logger.warning(
+                            f"{estrategia_nome} retornou arquivo sem vídeo+áudio "
+                            f"({caminho.name}) — tentando próxima estratégia"
+                        )
+                        continue
                     logger.info(f"Sucesso com {estrategia_nome} em {tempo:.1f}s")
                     return True, caminho, estrategia_nome
 
@@ -80,6 +87,23 @@ class VideoDownloader:
 
         logger.error("Todas as estratégias falharam!")
         return False, None, "none"
+
+    @staticmethod
+    def _tem_video_e_audio(caminho: Path) -> bool:
+        """Confere via ffprobe se o arquivo tem stream de vídeo E de áudio.
+
+        Evita aceitar intermediários de merge do yt-dlp (video-only) como
+        resultado final. Se o ffprobe não estiver disponível, não bloqueia.
+        """
+        try:
+            from core.validator import VideoValidator
+            streams = VideoValidator.obter_metadados(caminho).get("streams", []) or []
+            if not streams:
+                return True  # ffprobe indisponível/falhou — não bloquear
+            tipos = {s.get("codec_type") for s in streams}
+            return "video" in tipos and "audio" in tipos
+        except Exception:
+            return True
 
     @staticmethod
     def _resolve_cookies_file() -> Optional[Path]:
@@ -137,6 +161,12 @@ class VideoDownloader:
                 "--no-check-certificate",
                 "--concurrent-fragments", str(concurrent_frags),
                 "--http-chunk-size", "10M",
+                # Imprime o caminho final REAL (pós-merge/move) no stdout.
+                # Sem isso, a heurística de glob por mtime pode devolver um
+                # intermediário video-only órfão (ex.: "Titulo.fhls-4429.mp4")
+                # de um download anterior interrompido.
+                "--no-simulate",
+                "--print", "after_move:filepath",
             ])
 
             logger.debug(f"Executando: {' '.join(full_cmd)}")
@@ -154,11 +184,23 @@ class VideoDownloader:
             )
 
             if resultado.returncode == 0:
-                new_files = [f for f in self.output_dir.glob("*.mp4") if f not in existing_mp4s]
+                # Caminho(s) impressos por --print after_move:filepath (um por
+                # entrada; o último é o mais recente).
+                for linha in reversed(resultado.stdout.splitlines()):
+                    candidato = Path(linha.strip())
+                    if linha.strip() and candidato.is_file():
+                        return candidato
+                # Fallback: glob por mtime, ignorando intermediários de merge
+                # do yt-dlp (sufixo de format-id, ex.: "Titulo.fhls-4429.mp4").
+                nao_intermediario = lambda p: not re.search(r"\.f[\w-]+\.mp4$", p.name)
+                new_files = [
+                    f for f in self.output_dir.glob("*.mp4")
+                    if f not in existing_mp4s and nao_intermediario(f)
+                ]
                 if new_files:
                     return max(new_files, key=lambda p: p.stat().st_mtime)
-                # Fallback: check all files if snapshot missed (e.g. overwrite)
-                arquivos = list(self.output_dir.glob("*.mp4"))
+                # Último recurso: qualquer mp4 não-intermediário (e.g. overwrite)
+                arquivos = [f for f in self.output_dir.glob("*.mp4") if nao_intermediario(f)]
                 if arquivos:
                     return max(arquivos, key=lambda p: p.stat().st_mtime)
             else:
@@ -255,26 +297,28 @@ class VideoDownloader:
         self._run_ytdlp(cmd_audio, half_timeout)
 
         # Merge com FFmpeg
-        if output_video.exists() and output_audio.exists():
-            cmd_merge = [
-                "ffmpeg",
-                "-i", str(output_video),
-                "-i", str(output_audio),
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-y",
-                str(output_final)
-            ]
-            resultado = subprocess.run(cmd_merge, capture_output=True, timeout=60)
+        try:
+            if output_video.exists() and output_audio.exists():
+                cmd_merge = [
+                    "ffmpeg",
+                    "-i", str(output_video),
+                    "-i", str(output_audio),
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-y",
+                    str(output_final)
+                ]
+                resultado = subprocess.run(cmd_merge, capture_output=True, timeout=60)
 
-            # Limpar temporários
+                if resultado.returncode == 0 and output_final.exists():
+                    return output_final
+
+            return None
+        finally:
+            # Limpar temporários mesmo quando só um dos downloads funcionou
+            # (senão temp_video_*/temp_audio_* órfãos acumulam em raw/).
             output_video.unlink(missing_ok=True)
             output_audio.unlink(missing_ok=True)
-
-            if resultado.returncode == 0 and output_final.exists():
-                return output_final
-
-        return None
 
     def _estrategia_6_pytube_progressive(self, url: str, qualidade: str, timeout: int) -> Optional[Path]:
         """Estratégia 6: PyTube com stream progressivo"""
