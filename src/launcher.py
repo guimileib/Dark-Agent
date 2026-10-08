@@ -10,6 +10,31 @@ Responsible for:
 """
 
 import sys
+
+
+# ---------------------------------------------------------------------------
+# Modo "yt-dlp" (precisa rodar ANTES de qualquer outro import/side-effect)
+# ---------------------------------------------------------------------------
+# core/downloader.py executa `[sys.executable, "-m", "yt_dlp", ...]`. No .exe
+# congelado, sys.executable é este próprio launcher — sem este desvio, cada
+# download abriria outra instância da GUI em vez de rodar o yt-dlp.
+
+if getattr(sys, "frozen", False) and sys.argv[1:3] == ["-m", "yt_dlp"]:
+    import io
+    import os as _os
+
+    # Exe windowed: stdout/stderr podem ser None quando não há pipe herdado.
+    for _name in ("stdout", "stderr"):
+        if getattr(sys, _name) is None:
+            setattr(sys, _name, open(_os.devnull, "w", encoding="utf-8"))
+        elif isinstance(getattr(sys, _name), io.TextIOWrapper):
+            getattr(sys, _name).reconfigure(encoding="utf-8", errors="replace")
+
+    import yt_dlp
+
+    sys.exit(yt_dlp.main(sys.argv[3:]))
+
+
 import os
 import logging
 import zipfile
@@ -421,6 +446,12 @@ def main() -> None:
     # immediately after PyInstaller finishes self-extraction.
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("DarkAgent Pro")
+
+    from utils import single_instance
+    if not single_instance.acquire():
+        logger.info("Outra instância já está aberta — encerrando.")
+        single_instance.notify_already_running()
+        sys.exit(0)
 
     icon_png = ASSETS_DIR / "icon.png"
     icon_ico = ASSETS_DIR / "icon.ico"

@@ -36,8 +36,10 @@ class DownloadWidget(QWidget):
         container = QFrame()
         container.setObjectName("GlassContainer")
         container_layout = QVBoxLayout(container)
-        container_layout.setSpacing(18)
-        container_layout.setContentsMargins(30, 30, 30, 30)
+        # Compacto de propósito: o conteúdo inteiro (até os botões de ação)
+        # precisa caber na janela padrão sem depender do scroll do tab.
+        container_layout.setSpacing(10)
+        container_layout.setContentsMargins(24, 18, 24, 18)
 
         # ── Título ──────────────────────────────────────────────────────
         url_label = QLabel("URLs dos Vídeos")
@@ -54,7 +56,7 @@ class DownloadWidget(QWidget):
 
         self.url_entry = QLineEdit()
         self.url_entry.setPlaceholderText("📺 Cole ou digite o link (YouTube, TikTok, etc)...")
-        self.url_entry.setMinimumHeight(46)
+        self.url_entry.setMinimumHeight(40)
         self.url_entry.setStyleSheet("""
             QLineEdit {
                 background-color: rgba(15, 23, 42, 0.8);
@@ -73,7 +75,7 @@ class DownloadWidget(QWidget):
         entry_row.addWidget(self.url_entry, 1)
 
         self.btn_add_url = QPushButton("+ Adicionar")
-        self.btn_add_url.setMinimumHeight(46)
+        self.btn_add_url.setMinimumHeight(40)
         self.btn_add_url.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_add_url.setStyleSheet("""
             QPushButton {
@@ -138,8 +140,9 @@ class DownloadWidget(QWidget):
 
         self.url_list = QListWidget()
         self.url_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.url_list.setMinimumHeight(130)
-        self.url_list.setMaximumHeight(200)
+        # Altura fixa: adicionar links rola DENTRO da lista, nunca empurra
+        # nem sobrepõe os campos abaixo (Qualidade / Pasta de Saída).
+        self.url_list.setFixedHeight(150)
         self.url_list.setStyleSheet("""
             QListWidget {
                 background-color: rgba(10, 15, 30, 0.9);
@@ -195,7 +198,7 @@ class DownloadWidget(QWidget):
         self.qualidade_combo = QComboBox()
         self.qualidade_combo.addItems(["1080p", "720p", "480p", "360p"])
         self.qualidade_combo.setCurrentText("720p")
-        self.qualidade_combo.setMinimumHeight(42)
+        self.qualidade_combo.setMinimumHeight(38)
         qualidade_group.addWidget(self.qualidade_combo)
         grid_config.addLayout(qualidade_group, 1)
 
@@ -215,11 +218,11 @@ class DownloadWidget(QWidget):
 
         self.pasta_label = QLineEdit(str(settings.output_dir))
         self.pasta_label.setReadOnly(True)
-        self.pasta_label.setMinimumHeight(42)
+        self.pasta_label.setMinimumHeight(38)
         pasta_input_layout.addWidget(self.pasta_label)
 
         self.btn_pasta = QPushButton("Escolher...")
-        self.btn_pasta.setMinimumHeight(42)
+        self.btn_pasta.setMinimumHeight(38)
         self.btn_pasta.clicked.connect(self.escolher_pasta)
         pasta_input_layout.addWidget(self.btn_pasta)
 
@@ -233,14 +236,6 @@ class DownloadWidget(QWidget):
         marker_label.setObjectName("SectionTitle")
         container_layout.addWidget(marker_label)
 
-        marker_subtitle = QLabel(
-            "Selecione um ou mais vídeos na fila acima e defina o texto a ser queimado "
-            "naquele(s) vídeo(s). Cada vídeo guarda seu próprio marcador."
-        )
-        marker_subtitle.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 4px;")
-        marker_subtitle.setWordWrap(True)
-        container_layout.addWidget(marker_subtitle)
-
         self.marker_status_label = QLabel("Selecione um vídeo da fila para configurar seu marcador.")
         self.marker_status_label.setStyleSheet("color: #94a3b8; font-size: 11px; font-style: italic; margin-bottom: 2px;")
         container_layout.addWidget(self.marker_status_label)
@@ -250,7 +245,7 @@ class DownloadWidget(QWidget):
 
         self.marker_entry = QLineEdit()
         self.marker_entry.setPlaceholderText("Ex.: Episódio 1 — selecione um vídeo na fila")
-        self.marker_entry.setMinimumHeight(42)
+        self.marker_entry.setMinimumHeight(38)
         self.marker_entry.setEnabled(False)
         self.marker_entry.setStyleSheet("""
             QLineEdit {
@@ -275,7 +270,7 @@ class DownloadWidget(QWidget):
         self.marker_pos_combo.addItem("Embaixo Direita",  "bottom_right")
         self.marker_pos_combo.addItem("Embaixo Centro",   "bottom_center")
         self.marker_pos_combo.addItem("Embaixo Esquerda", "bottom_left")
-        self.marker_pos_combo.setMinimumHeight(42)
+        self.marker_pos_combo.setMinimumHeight(38)
         self.marker_pos_combo.setEnabled(False)
         marker_row.addWidget(self.marker_pos_combo, 1)
 
@@ -293,7 +288,7 @@ class DownloadWidget(QWidget):
 
         # Botão: apenas baixar
         self.btn_baixar = QPushButton("⬇  Baixar (Sem Legendas)")
-        self.btn_baixar.setMinimumHeight(52)
+        self.btn_baixar.setMinimumHeight(46)
         self.btn_baixar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_baixar.setStyleSheet("""
             QPushButton {
@@ -316,7 +311,7 @@ class DownloadWidget(QWidget):
 
         # Botão: baixar + legendar (NOVO — destaque visual)
         self.btn_baixar_legendar = QPushButton("⚡  Baixar + Legendar")
-        self.btn_baixar_legendar.setMinimumHeight(52)
+        self.btn_baixar_legendar.setMinimumHeight(46)
         self.btn_baixar_legendar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_baixar_legendar.setStyleSheet("""
             QPushButton {

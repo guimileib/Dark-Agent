@@ -3,41 +3,30 @@ echo ==========================================
 echo Building DarkAgent Pro Launcher...
 echo ==========================================
 
-:: Ensure PyInstaller is installed
-call venv\Scripts\activate.bat
-pip install pyinstaller
+:: Usa o venv do projeto (precisa ter torch CPU + requirements instalados)
+call venv\Scripts\activate.bat || goto :fail
+pip install --quiet pyinstaller || goto :fail
 
-:: Clean previous builds
-if exist "build" rmdir /s /q "build"
-if exist "dist" rmdir /s /q "dist"
-if exist "DarkAgentLauncher.spec" del "DarkAgentLauncher.spec"
+:: Checagem estrutural antes de gastar ~10 min de build
+python scripts\check_structure.py || goto :fail
 
-:: Run PyInstaller
-:: --noconsole: Hide terminal window
-:: --onefile: Create a single executable
-:: --name: Name of the output file
-:: --icon: Application icon
-:: --add-data: Include assets folder
-:: --collect-all: Ensure complex packages are fully included
-pyinstaller ^
-    --noconsole ^
-    --onefile ^
-    --name "DarkAgentLauncher" ^
-    --icon "src/assets/icon.png" ^
-    --add-data "src/assets;src/assets" ^
-    --add-data "src/config;src/config" ^
-    --collect-all "whisper" ^
-    --collect-all "torch" ^
-    --hidden-import "PIL" ^
-    --hidden-import "PyQt6" ^
-    src/launcher.py
+:: NUNCA apagar DarkAgentLauncher.spec — ele e a fonte de verdade do build
+:: (pathex, collect_submodules, yt_dlp, etc.). --clean ja limpa build/ e cache.
+if exist "dist\DarkAgentLauncher.exe" del /q "dist\DarkAgentLauncher.exe"
+pyinstaller DarkAgentLauncher.spec --clean --noconfirm || goto :fail
+
+if not exist "dist\DarkAgentLauncher.exe" goto :fail
 
 echo ==========================================
-if exist "dist\DarkAgentLauncher.exe" (
-    echo Build Successful!
-    echo Executable located at: dist\DarkAgentLauncher.exe
-) else (
-    echo Build Failed!
-)
+echo Build Successful!
+echo Executable located at: dist\DarkAgentLauncher.exe
 echo ==========================================
 pause
+exit /b 0
+
+:fail
+echo ==========================================
+echo Build Failed!
+echo ==========================================
+pause
+exit /b 1

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
+import sys
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
@@ -20,6 +22,17 @@ from core.overlay_renderer import OverlayRenderer
 from models.overlay import OverlayElemento, OverlayTemplate
 
 logger = logging.getLogger(__name__)
+
+_SP_KW: dict = {}
+if sys.platform == "win32":
+    _SP_KW["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+_MUSIC_VIDEO_BLOCKS = [
+    "Intro",
+    "Verso 1",
+    "Refrao",
+    "Drop",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +205,24 @@ class EditorWidget(QWidget):
         btn_load.clicked.connect(self._load_template)
         tpl_row.addWidget(btn_load)
         left_lay.addLayout(tpl_row)
+
+        # Quick presets
+        lbl_preset = QLabel("Padroes Rapidos")
+        lbl_preset.setObjectName("SectionTitle")
+        left_lay.addWidget(lbl_preset)
+
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(8)
+        btn_music = QPushButton("Video de Musica")
+        btn_music.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_music.setStyleSheet(self._btn_accent_style())
+        btn_music.setToolTip(
+            "Cria varios blocos de texto distribuidos pelo video com estilo de clipe musical.\n"
+            "Voce edita o texto e o timing depois."
+        )
+        btn_music.clicked.connect(self._apply_music_video_preset)
+        preset_row.addWidget(btn_music)
+        left_lay.addLayout(preset_row)
 
         left_lay.addStretch()
         root.addWidget(left, 4)
@@ -768,6 +799,81 @@ class EditorWidget(QWidget):
             self._lbl_status.setText(f"Template carregado: {tpl.nome} ({len(tpl.elementos)} elementos)")
         except Exception as exc:
             QMessageBox.critical(self, "Erro", f"Falha ao carregar template:\n{exc}")
+
+    # ==================================================================
+    # Preset: Video de Musica
+    # ==================================================================
+
+    def _probe_video_duration(self, path: Path) -> float:
+        """Retorna duracao do video em segundos via ffprobe. 0.0 em falha."""
+        try:
+            cmd = [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "json", str(path),
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, **_SP_KW)
+            if result.returncode == 0:
+                return float(json.loads(result.stdout)["format"]["duration"])
+        except Exception as exc:
+            logger.warning(f"Falha ao obter duracao do video: {exc}")
+        return 0.0
+
+    def _apply_music_video_preset(self):
+        """Cria N blocos de texto distribuidos pela duracao do video selecionado."""
+        if not self._video_path or not self._video_path.exists():
+            QMessageBox.warning(self, "Aviso", "Selecione um video de origem primeiro.")
+            return
+
+        duracao = self._probe_video_duration(self._video_path)
+        if duracao <= 0:
+            QMessageBox.critical(
+                self, "Erro",
+                "Nao foi possivel ler a duracao do video. Verifique se o ffprobe esta instalado.",
+            )
+            return
+
+        # Confirma sobrescrita se ja houver elementos
+        if self._elementos:
+            resp = QMessageBox.question(
+                self, "Substituir elementos?",
+                f"Ja existem {len(self._elementos)} elementos no editor.\n"
+                "Substituir pelos blocos do padrao 'Video de Musica'?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                return
+
+        n_blocos = len(_MUSIC_VIDEO_BLOCKS)
+        bloco_dur = duracao / n_blocos
+        # Cada texto fica visivel ~70% do bloco, centralizado na fatia
+        margem = bloco_dur * 0.15
+
+        novos: list[OverlayElemento] = []
+        for i, label in enumerate(_MUSIC_VIDEO_BLOCKS):
+            inicio = round(i * bloco_dur + margem, 1)
+            fim = round((i + 1) * bloco_dur - margem, 1)
+            elem = OverlayElemento(
+                tipo="texto",
+                inicio=inicio,
+                fim=fim,
+                posicao_preset="bottom_center",
+                texto=label,
+                fonte="Impact",
+                tamanho_fonte=64,
+                bold=True,
+                cor_texto="#FFFFFF",
+                cor_borda="#000000",
+                borda_espessura=4,
+            )
+            novos.append(elem)
+
+        self._elementos = novos
+        self._refresh_list()
+        self._elem_list.setCurrentRow(0)
+        self._lbl_status.setText(
+            f"Padrao 'Video de Musica' aplicado: {n_blocos} blocos em {duracao:.1f}s."
+        )
 
     # ==================================================================
     # Render

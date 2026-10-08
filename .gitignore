@@ -41,10 +41,12 @@ env/
 Thumbs.db
 
 # Diretórios de trabalho
-output/
-cache/
-temp/
-models/
+# Ancorados na raiz: sem a "/", `models/` também ignorava src/models/ (pacote
+# de código) e o build do CI saía sem ele.
+/output/
+/cache/
+/temp/
+/models/
 
 # Arquivos temporários
 *.tmp

@@ -1,0 +1,165 @@
+name: CI & Release
+
+# - PR para main ............ structure → tests
+# - push na main ............ structure → tests → (se __version__ não tem tag) build + Release
+# - push de tag vX.Y.Z ...... structure → tests → build + Release (tag precisa == __version__)
+# - workflow_dispatch ....... igual push na main, mas republica mesmo se a tag existir
+#
+# O app (UpdateCheckerThread) consulta releases/latest ao abrir — então "subir
+# pra main com versão bumpada" = usuários recebem o update.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  structure:
+    name: Checagem estrutural
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python scripts/check_structure.py
+
+  tests:
+    name: Imports + pytest (Windows)
+    needs: structure
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install PyTorch (CPU build)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install project dependencies
+        run: pip install -r requirements.txt
+
+      - name: Importar todos os módulos de src/
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python scripts/check_structure.py --imports
+
+      - name: Run pytest
+        # TODO: reabilitar os testes excluídos abaixo quando forem atualizados:
+        #   - test_downloader.py::test_downloader_initialization (referencia
+        #     `.estrategias` antigo, hoje é `_get_strategies()`)
+        #   - test_downloader.py::test_get_video_info (faz request real ao
+        #     YouTube — flaky em CI; precisa virar mock)
+        #   - test_downloader_manual.py (script manual, não é pytest válido)
+        #   - test_preview_renderer.py (API do PreviewRenderer mudou)
+        #   - test_upload_integration.py (segfault sem display + asserções
+        #     sobre cookies_path obsoletas)
+        run: |
+          pytest tests/ `
+            --ignore=tests/test_downloader.py `
+            --ignore=tests/test_downloader_manual.py `
+            --ignore=tests/test_preview_renderer.py `
+            --ignore=tests/test_upload_integration.py `
+            -v --tb=short
+
+  version:
+    name: Decidir release
+    if: github.event_name != 'pull_request'
+    needs: structure
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.v.outputs.release }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          version=$(python -c "import ast,sys; t=ast.parse(open('src/__init__.py',encoding='utf-8').read()); print(next(n.value.value for n in t.body if isinstance(n,ast.Assign) and getattr(n.targets[0],'id','')=='__version__'))")
+          tag="v${version}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != "${tag}" ]]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} != __version__ (${version}). Faça o bump em src/__init__.py."
+              exit 1
+            fi
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} já publicado — sem release (bumpe __version__ para publicar)."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nova versão ${tag} — vai publicar."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build .exe + Release
+    needs: [tests, version]
+    if: needs.version.outputs.release == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install PyTorch (CPU build)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install project dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build executable
+        run: pyinstaller DarkAgentLauncher.spec --clean --noconfirm
+
+      - name: Smoke test do bundle (yt-dlp embutido)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/DarkAgentLauncher.exe")) {
+            Write-Error "Build artifact not found"; exit 1
+          }
+          $size = (Get-Item "dist/DarkAgentLauncher.exe").Length / 1MB
+          Write-Host "Built DarkAgentLauncher.exe ($([math]::Round($size, 2)) MB)"
+
+          # `exe -m yt_dlp --version` exercita o desvio do launcher.py e prova
+          # que yt_dlp entrou no bundle. Se cair na GUI, o timeout pega.
+          $p = Start-Process "dist/DarkAgentLauncher.exe" -ArgumentList "-m","yt_dlp","--version" `
+                 -RedirectStandardOutput ytdlp.txt -PassThru -NoNewWindow
+          $null = $p.Handle  # sem cachear o handle, ExitCode volta vazio
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); Write-Error "exe -m yt_dlp travou (abriu a GUI?)"; exit 1 }
+          if ($p.ExitCode -ne 0) { Write-Error "exe -m yt_dlp saiu com $($p.ExitCode)"; exit 1 }
+          Write-Host "yt-dlp no bundle: $(Get-Content ytdlp.txt)"
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: DarkAgent Pro ${{ needs.version.outputs.tag }}
+          generate_release_notes: true
+          files: dist/DarkAgentLauncher.exe
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

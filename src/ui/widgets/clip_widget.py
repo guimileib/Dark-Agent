@@ -696,13 +696,16 @@ class ClipWidget(QWidget):
         self.combo_video.addItem("Selecione um vídeo...")
         
         try:
-            from config.paths import APP_DIR
-            # Procurar vídeos em possíveis pastas de download
+            from config.paths import OUTPUT_RAW, OUTPUT_FINAL, OUTPUT_CLIPS
+            # Procurar vídeos na pasta de output (raiz + subpastas semânticas)
+            # e no Downloads do usuário. Só busca — não cria pasta nenhuma.
+            base = Path(settings.output_dir)
             pastas_busca = [
                 Path.home() / "Downloads",
-                APP_DIR / "downloads",
-                APP_DIR / "output",
-                settings.output_dir,
+                base,
+                base / OUTPUT_RAW,
+                base / OUTPUT_FINAL,
+                base / OUTPUT_CLIPS,
             ]
             
             extensoes_video = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v'}

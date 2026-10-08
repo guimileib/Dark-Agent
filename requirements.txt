@@ -6,6 +6,9 @@ PyQt6-WebEngine>=6.6.0
 # yt-dlp recente é importante: extractors quebram com frequência e versões
 # antigas falham em sites que mudaram de API.
 yt-dlp>=2026.1.0
+# Sem pycryptodomex, HLS com AES-128 (ex.: southparkstudios) é delegado ao
+# ffmpeg — sem fragmentos paralelos e propenso a stall.
+pycryptodomex>=3.20.0
 pytube>=15.0.0
 
 # Processamento de Áudio/Vídeo

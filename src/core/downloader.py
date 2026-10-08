@@ -2,13 +2,42 @@
 
 import subprocess
 import logging
+import re
 import sys
 import json
+import os
 from pathlib import Path
 from typing import Optional, Tuple
 import time
 
 logger = logging.getLogger(__name__)
+
+# Esconde a janela de console do ffmpeg/yt-dlp no .exe windowed (ver CLAUDE.md).
+_SUBPROCESS_KWARGS = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+)
+
+# Força o yt-dlp filho a escrever stdout em UTF-8 — sem isso, no Windows ele usa
+# cp1252 e `--print after_move:filepath` chega corrompido para títulos com acento.
+_CHILD_ENV = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+
+# Erros em que nenhuma outra estratégia vai ajudar (o vídeo em si é inacessível).
+# Detectá-los evita gastar até 7 × timeout tentando o impossível.
+_ERROS_PERMANENTES = (
+    "video unavailable",
+    "private video",
+    "this video has been removed",
+    "unsupported url",
+    "is not a valid url",
+    "http error 404",
+    "members-only",
+    "join this channel",
+    "this live event will begin",
+)
+
+
+class DownloadPermanenteError(Exception):
+    """O vídeo é inacessível independentemente da estratégia (privado, removido, URL inválida)."""
 
 
 class VideoDownloader:
@@ -68,11 +97,24 @@ class VideoDownloader:
                 tempo = time.time() - inicio
 
                 if caminho and caminho.exists():
+                    if not self._tem_video_e_audio(caminho):
+                        logger.warning(
+                            f"{estrategia_nome} retornou arquivo sem vídeo+áudio "
+                            f"({caminho.name}) — tentando próxima estratégia"
+                        )
+                        continue
                     logger.info(f"Sucesso com {estrategia_nome} em {tempo:.1f}s")
                     return True, caminho, estrategia_nome
 
+            except DownloadPermanenteError as e:
+                logger.error(f"Erro permanente em {estrategia_nome}, abortando fallbacks: {e}")
+                return False, None, "none"
             except subprocess.TimeoutExpired:
                 logger.warning(f"Timeout em {estrategia_nome} após {timeout}s")
+                continue
+            except FileNotFoundError as e:
+                # ffmpeg/yt-dlp ausente: a próxima estratégia pode não depender dele.
+                logger.warning(f"Executável não encontrado em {estrategia_nome}: {e}")
                 continue
             except Exception as e:
                 logger.warning(f"Falha em {estrategia_nome}: {e}")
@@ -80,6 +122,23 @@ class VideoDownloader:
 
         logger.error("Todas as estratégias falharam!")
         return False, None, "none"
+
+    @staticmethod
+    def _tem_video_e_audio(caminho: Path) -> bool:
+        """Confere via ffprobe se o arquivo tem stream de vídeo E de áudio.
+
+        Evita aceitar intermediários de merge do yt-dlp (video-only) como
+        resultado final. Se o ffprobe não estiver disponível, não bloqueia.
+        """
+        try:
+            from core.validator import VideoValidator
+            streams = VideoValidator.obter_metadados(caminho).get("streams", []) or []
+            if not streams:
+                return True  # ffprobe indisponível/falhou — não bloquear
+            tipos = {s.get("codec_type") for s in streams}
+            return "video" in tipos and "audio" in tipos
+        except Exception:
+            return True
 
     @staticmethod
     def _resolve_cookies_file() -> Optional[Path]:
@@ -137,6 +196,12 @@ class VideoDownloader:
                 "--no-check-certificate",
                 "--concurrent-fragments", str(concurrent_frags),
                 "--http-chunk-size", "10M",
+                # Imprime o caminho final REAL (pós-merge/move) no stdout.
+                # Sem isso, a heurística de glob por mtime pode devolver um
+                # intermediário video-only órfão (ex.: "Titulo.fhls-4429.mp4")
+                # de um download anterior interrompido.
+                "--no-simulate",
+                "--print", "after_move:filepath",
             ])
 
             logger.debug(f"Executando: {' '.join(full_cmd)}")
@@ -150,24 +215,44 @@ class VideoDownloader:
                 text=True,
                 timeout=timeout,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                env=_CHILD_ENV,
+                **_SUBPROCESS_KWARGS,
             )
 
             if resultado.returncode == 0:
-                new_files = [f for f in self.output_dir.glob("*.mp4") if f not in existing_mp4s]
+                # Caminho(s) impressos por --print after_move:filepath (um por
+                # entrada; o último é o mais recente).
+                for linha in reversed(resultado.stdout.splitlines()):
+                    candidato = Path(linha.strip())
+                    if linha.strip() and candidato.is_file():
+                        return candidato
+                # Fallback: glob por mtime, ignorando intermediários de merge
+                # do yt-dlp (sufixo de format-id, ex.: "Titulo.fhls-4429.mp4").
+                nao_intermediario = lambda p: not re.search(r"\.f[\w-]+\.mp4$", p.name)
+                new_files = [
+                    f for f in self.output_dir.glob("*.mp4")
+                    if f not in existing_mp4s and nao_intermediario(f)
+                ]
                 if new_files:
                     return max(new_files, key=lambda p: p.stat().st_mtime)
-                # Fallback: check all files if snapshot missed (e.g. overwrite)
-                arquivos = list(self.output_dir.glob("*.mp4"))
+                # Último recurso: qualquer mp4 não-intermediário (e.g. overwrite)
+                arquivos = [f for f in self.output_dir.glob("*.mp4") if nao_intermediario(f)]
                 if arquivos:
                     return max(arquivos, key=lambda p: p.stat().st_mtime)
             else:
                 logger.error(f"Erro yt-dlp (Exit Code {resultado.returncode}):")
                 logger.error(f"STDOUT: {resultado.stdout}")
                 logger.error(f"STDERR: {resultado.stderr}")
+                stderr = (resultado.stderr or "").lower()
+                motivo = next((m for m in _ERROS_PERMANENTES if m in stderr), None)
+                if motivo:
+                    raise DownloadPermanenteError(motivo)
 
         except subprocess.TimeoutExpired:
             logger.error(f"Timeout no yt-dlp após {timeout}s")
+            raise
+        except DownloadPermanenteError:
             raise
         except Exception as e:
             logger.error(f"Erro ao executar yt-dlp: {e}")
@@ -255,26 +340,30 @@ class VideoDownloader:
         self._run_ytdlp(cmd_audio, half_timeout)
 
         # Merge com FFmpeg
-        if output_video.exists() and output_audio.exists():
-            cmd_merge = [
-                "ffmpeg",
-                "-i", str(output_video),
-                "-i", str(output_audio),
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-y",
-                str(output_final)
-            ]
-            resultado = subprocess.run(cmd_merge, capture_output=True, timeout=60)
+        try:
+            if output_video.exists() and output_audio.exists():
+                cmd_merge = [
+                    "ffmpeg",
+                    "-i", str(output_video),
+                    "-i", str(output_audio),
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-y",
+                    str(output_final)
+                ]
+                resultado = subprocess.run(
+                    cmd_merge, capture_output=True, timeout=120, **_SUBPROCESS_KWARGS
+                )
 
-            # Limpar temporários
+                if resultado.returncode == 0 and output_final.exists():
+                    return output_final
+
+            return None
+        finally:
+            # Limpar temporários mesmo quando só um dos downloads funcionou
+            # (senão temp_video_*/temp_audio_* órfãos acumulam em raw/).
             output_video.unlink(missing_ok=True)
             output_audio.unlink(missing_ok=True)
-
-            if resultado.returncode == 0 and output_final.exists():
-                return output_final
-
-        return None
 
     def _estrategia_6_pytube_progressive(self, url: str, qualidade: str, timeout: int) -> Optional[Path]:
         """Estratégia 6: PyTube com stream progressivo"""
@@ -309,7 +398,7 @@ class VideoDownloader:
             str(output_path)
         ]
 
-        resultado = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        resultado = subprocess.run(cmd, capture_output=True, timeout=timeout, **_SUBPROCESS_KWARGS)
 
         if resultado.returncode == 0 and output_path.exists():
             return output_path
@@ -327,7 +416,16 @@ class VideoDownloader:
                 url
             ]
 
-            resultado = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            resultado = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                encoding='utf-8',
+                errors='replace',
+                env=_CHILD_ENV,
+                **_SUBPROCESS_KWARGS,
+            )
 
             if resultado.returncode == 0:
                 return json.loads(resultado.stdout)

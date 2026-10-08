@@ -122,6 +122,13 @@ def main():
         app.setApplicationName("DarkAgent Pro")
         app.setApplicationVersion(__version__)
 
+        # No-op quando chamado via launcher (que já obteve o lock); cobre o
+        # caminho dev `python -m src.main`.
+        from utils import single_instance
+        if not single_instance.acquire():
+            single_instance.notify_already_running()
+            sys.exit(0)
+
         from PyQt6.QtGui import QIcon
         from config.paths import ASSETS_DIR
         icon_path = ASSETS_DIR / "icon.png"
