@@ -5,11 +5,39 @@ import logging
 import re
 import sys
 import json
+import os
 from pathlib import Path
 from typing import Optional, Tuple
 import time
 
 logger = logging.getLogger(__name__)
+
+# Esconde a janela de console do ffmpeg/yt-dlp no .exe windowed (ver CLAUDE.md).
+_SUBPROCESS_KWARGS = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+)
+
+# Força o yt-dlp filho a escrever stdout em UTF-8 — sem isso, no Windows ele usa
+# cp1252 e `--print after_move:filepath` chega corrompido para títulos com acento.
+_CHILD_ENV = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+
+# Erros em que nenhuma outra estratégia vai ajudar (o vídeo em si é inacessível).
+# Detectá-los evita gastar até 7 × timeout tentando o impossível.
+_ERROS_PERMANENTES = (
+    "video unavailable",
+    "private video",
+    "this video has been removed",
+    "unsupported url",
+    "is not a valid url",
+    "http error 404",
+    "members-only",
+    "join this channel",
+    "this live event will begin",
+)
+
+
+class DownloadPermanenteError(Exception):
+    """O vídeo é inacessível independentemente da estratégia (privado, removido, URL inválida)."""
 
 
 class VideoDownloader:
@@ -78,8 +106,15 @@ class VideoDownloader:
                     logger.info(f"Sucesso com {estrategia_nome} em {tempo:.1f}s")
                     return True, caminho, estrategia_nome
 
+            except DownloadPermanenteError as e:
+                logger.error(f"Erro permanente em {estrategia_nome}, abortando fallbacks: {e}")
+                return False, None, "none"
             except subprocess.TimeoutExpired:
                 logger.warning(f"Timeout em {estrategia_nome} após {timeout}s")
+                continue
+            except FileNotFoundError as e:
+                # ffmpeg/yt-dlp ausente: a próxima estratégia pode não depender dele.
+                logger.warning(f"Executável não encontrado em {estrategia_nome}: {e}")
                 continue
             except Exception as e:
                 logger.warning(f"Falha em {estrategia_nome}: {e}")
@@ -180,7 +215,9 @@ class VideoDownloader:
                 text=True,
                 timeout=timeout,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                env=_CHILD_ENV,
+                **_SUBPROCESS_KWARGS,
             )
 
             if resultado.returncode == 0:
@@ -207,9 +244,15 @@ class VideoDownloader:
                 logger.error(f"Erro yt-dlp (Exit Code {resultado.returncode}):")
                 logger.error(f"STDOUT: {resultado.stdout}")
                 logger.error(f"STDERR: {resultado.stderr}")
+                stderr = (resultado.stderr or "").lower()
+                motivo = next((m for m in _ERROS_PERMANENTES if m in stderr), None)
+                if motivo:
+                    raise DownloadPermanenteError(motivo)
 
         except subprocess.TimeoutExpired:
             logger.error(f"Timeout no yt-dlp após {timeout}s")
+            raise
+        except DownloadPermanenteError:
             raise
         except Exception as e:
             logger.error(f"Erro ao executar yt-dlp: {e}")
@@ -308,7 +351,9 @@ class VideoDownloader:
                     "-y",
                     str(output_final)
                 ]
-                resultado = subprocess.run(cmd_merge, capture_output=True, timeout=60)
+                resultado = subprocess.run(
+                    cmd_merge, capture_output=True, timeout=120, **_SUBPROCESS_KWARGS
+                )
 
                 if resultado.returncode == 0 and output_final.exists():
                     return output_final
@@ -353,7 +398,7 @@ class VideoDownloader:
             str(output_path)
         ]
 
-        resultado = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        resultado = subprocess.run(cmd, capture_output=True, timeout=timeout, **_SUBPROCESS_KWARGS)
 
         if resultado.returncode == 0 and output_path.exists():
             return output_path
@@ -371,7 +416,16 @@ class VideoDownloader:
                 url
             ]
 
-            resultado = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            resultado = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                encoding='utf-8',
+                errors='replace',
+                env=_CHILD_ENV,
+                **_SUBPROCESS_KWARGS,
+            )
 
             if resultado.returncode == 0:
                 return json.loads(resultado.stdout)

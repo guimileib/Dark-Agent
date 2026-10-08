@@ -26,6 +26,13 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('torch')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+# yt-dlp roda via `DarkAgentLauncher.exe -m yt_dlp` (ver topo do launcher.py).
+# Ninguém o importa estaticamente e os extractors são lazy — sem collect_all
+# o download quebra no .exe. Cryptodome = HLS AES-128 nativo (ver requirements).
+for _pkg in ('yt_dlp', 'Cryptodome'):
+    tmp_ret = collect_all(_pkg)
+    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
 
 a = Analysis(
     ['src\\launcher.py'],

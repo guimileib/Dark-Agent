@@ -560,20 +560,29 @@ class MainWindow(QMainWindow):
                             self.progress_bar.setValue(pct)
                             QApplication.processEvents()
 
+            # Download truncado (queda de rede) geraria um .exe corrompido que
+            # substituiria o atual — o usuário ficaria sem app nenhum.
+            if total > 0 and downloaded != total:
+                raise IOError(f"download incompleto ({downloaded} de {total} bytes)")
+
             current_exe = Path(sys.executable).resolve()
             bat_path = update_dir / "apply_update.bat"
 
-            # Helper .bat: aguarda o processo atual liberar o arquivo (retry no move),
-            # substitui o binário, relança e auto-deleta.
+            # Helper .bat: aguarda o processo atual liberar o arquivo (retry no move,
+            # máx. ~60s — antivírus segurando o .exe não pode virar loop eterno),
+            # substitui o binário, relança e auto-deleta. Se desistir, relança a
+            # versão antiga: o usuário nunca fica sem app.
             bat_content = (
                 "@echo off\r\n"
+                "set tries=0\r\n"
                 "ping 127.0.0.1 -n 3 >NUL\r\n"
                 ":retry\r\n"
-                f'move /Y "{new_exe}" "{current_exe}"\r\n'
-                "if errorlevel 1 (\r\n"
-                "    ping 127.0.0.1 -n 2 >NUL\r\n"
-                "    goto retry\r\n"
-                ")\r\n"
+                f'move /Y "{new_exe}" "{current_exe}" >NUL && goto launch\r\n'
+                "set /a tries+=1\r\n"
+                "if %tries% GEQ 30 goto launch\r\n"
+                "ping 127.0.0.1 -n 3 >NUL\r\n"
+                "goto retry\r\n"
+                ":launch\r\n"
                 f'start "" "{current_exe}"\r\n'
                 'del "%~f0"\r\n'
             )
