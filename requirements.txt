@@ -38,4 +38,11 @@ black>=23.12.0
 flake8>=6.1.0
 
 # Automação
-tiktok-uploader>=0.0.1
+# Pinado: 1.2.0 trocou a base (não puxa mais selenium) e core/uploader.py foi
+# escrito contra a API da 1.1.x.
+tiktok-uploader==1.1.5
+# Importados diretamente por core/uploader.py — declarar explicitamente em vez
+# de depender de dependência transitiva (foi assim que o CI quebrou na 2.0.2).
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+undetected-chromedriver>=3.5.5
