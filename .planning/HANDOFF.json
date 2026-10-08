@@ -1,0 +1,48 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-10-08T18:46:59Z",
+  "phase": null,
+  "phase_name": "default (sem fase GSD) — distribuição/CI + padronização de docs",
+  "phase_dir": ".planning",
+  "plan": null,
+  "task": 6,
+  "total_tasks": 7,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "Instância única (utils/single_instance.py) + aviso 'já está aberto'", "status": "done", "commit": "e829d09"},
+    {"id": 2, "name": "yt-dlp no .exe (desvio no topo do launcher.py + collect_all no .spec)", "status": "done", "commit": "e829d09"},
+    {"id": 3, "name": "src/models/ versionado (.gitignore ancorado) + ci.yml substitui release.yml", "status": "done", "commit": "e829d09"},
+    {"id": 4, "name": "Deps do uploader declaradas, tiktok-uploader==1.1.5", "status": "done", "commit": "da27fd8"},
+    {"id": 5, "name": "Release v2.0.3 publicada pelo CI (asset DarkAgentLauncher.exe 411 MB)", "status": "done", "commit": "e3b2543"},
+    {"id": 6, "name": "Docstrings ≤3 linhas em PT-BR + regra no check_structure + README.md/README.en.md", "status": "in_progress", "progress": "Tudo feito e validado localmente (check OK, 15 testes OK); falta commit/push — aguardando OK do usuário"}
+  ],
+  "remaining_tasks": [
+    {"id": 6, "name": "Commit + push das docstrings/READMEs no dev (só se o usuário pedir)", "status": "not_started"},
+    {"id": 7, "name": "Remover comentários do .env.example", "status": "not_started"}
+  ],
+  "blockers": [
+    {"description": "Arquivos .env* são negados pelas permissões do Claude Code (Read/Bash)", "type": "human_action", "workaround": "Usuário libera .env.example nas permissões ou cola o conteúdo via `! cat .env.example`. Nunca ler o .env real (tem chaves)."}
+  ],
+  "async_jobs": [],
+  "human_actions_pending": [
+    {"action": "Decidir se faz commit/push das docstrings + READMEs", "context": "Usuário não pediu commit nesta rodada", "blocking": true},
+    {"action": "Liberar acesso ao .env.example (ou colar o conteúdo)", "context": "Necessário para a tarefa 7", "blocking": true}
+  ],
+  "decisions": [
+    {"decision": "Push na main com __version__ sem tag publica Release automaticamente (ci.yml)", "rationale": "Usuário quer 'subir na main = update ao abrir o app'", "phase": null},
+    {"decision": "v2.0.2 abandonada (tag órfã sem Release); correção saiu como v2.0.3", "rationale": "Mover tag remota foi bloqueado como destrutivo; usuário escolheu bump", "phase": null},
+    {"decision": "Docstrings: PT-BR, ≤3 linhas, sem blocos Args/Returns; enforced no CI", "rationale": "Pedido do usuário: padrão com poucas linhas", "phase": null},
+    {"decision": "Removidos do README a tabela de performance e a linha 'MIT License'", "rationale": "Tempos não medidos; arquivo LICENSE não existe", "phase": null}
+  ],
+  "uncommitted_files": [
+    "README.md", "README.en.md", "scripts/check_structure.py",
+    "src/config/paths.py", "src/core/clip_analyzer.py", "src/core/compilation.py", "src/core/downloader.py",
+    "src/core/encoder.py", "src/core/overlay_renderer.py", "src/core/preview_renderer.py", "src/core/social_manager.py",
+    "src/core/subtitle_generator.py", "src/core/transcriber.py", "src/core/uploader.py", "src/core/validator.py",
+    "src/core/video_editor.py", "src/launcher.py", "src/models/overlay.py", "src/torch_fix.py", "src/ui/main_window.py",
+    "src/ui/widgets/compilation_widget.py", "src/ui/widgets/editor_widget.py", "src/ui/widgets/upload_widget.py",
+    "src/utils/single_instance.py"
+  ],
+  "next_action": "Perguntar ao usuário se pode commitar/pushar as docstrings + READMEs no dev; depois resolver o .env.example",
+  "context_notes": "Sem fase GSD. Trabalho em dev; main está em e3b2543 (v2.0.3 publicada). Commits só quando o usuário pedir. Usuário prefere PT-BR conciso."
+}
