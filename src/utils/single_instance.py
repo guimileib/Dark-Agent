@@ -1,13 +1,6 @@
-"""Garante uma única instância do DarkAgent por usuário.
+"""Garante uma única instância do app por usuário (mutex no Windows, QLockFile fora dele).
 
-Windows: mutex nomeado no namespace ``Local\\`` (por sessão de usuário). O
-kernel libera o mutex quando o processo morre — inclusive em crash — então não
-há lock "preso".
-
-Outras plataformas (dev): ``QLockFile`` no tempdir, que detecta locks órfãos.
-
-Idempotente: ``launcher.main()`` e ``main.main()`` rodam no mesmo processo e
-ambos chamam ``acquire()``; a segunda chamada reaproveita o lock já obtido.
+Idempotente: launcher e main chamam acquire() no mesmo processo.
 """
 
 import sys

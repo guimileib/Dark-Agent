@@ -31,12 +31,7 @@ class VideoValidator:
 
     @staticmethod
     def validar_video_completo(caminho: Path) -> Tuple[bool, Dict[str, bool]]:
-        """
-        Validação de vídeo — executa UMA chamada ffprobe e deriva todos os checks.
-
-        Returns:
-            (valido, checks) onde checks é um dict com resultados dos testes
-        """
+        """Valida o vídeo com UMA chamada ffprobe. Retorna (valido, checks)."""
         # Uma única chamada ffprobe para metadados completos.
         metadados = VideoValidator.obter_metadados(caminho)
         streams = metadados.get("streams", []) or []

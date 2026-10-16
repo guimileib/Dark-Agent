@@ -176,12 +176,9 @@ class ClipAnalyzer:
         return {i: 0.5 for i in range(int(self.duracao_total))}
     
     def _analisar_audio(self) -> Dict[int, float]:
-        """
-        Analisa energia do áudio por segundo via astats em janelas de 1s.
+        """Mede a energia RMS do áudio por segundo (astats em janelas de 1s, um único pass do ffmpeg).
 
-        Usa um único pass do ffmpeg: resample para 8kHz, força frames de 8000
-        samples (= 1 segundo cada) e pede astats com reset=1 para emitir RMS
-        por janela. Fallback para volumedetect global se astats falhar.
+        Se o astats falhar, cai para volumedetect global.
         """
         duration = max(int(self.duracao_total), 1)
         try:
@@ -189,7 +186,11 @@ class ClipAnalyzer:
                 "ffmpeg",
                 "-hide_banner",
                 "-i", str(self.video_path),
-                "-af", "aresample=8000,asetnsamples=n=8000:p=0,astats=metadata=1:reset=1",
+                # astats sozinho só imprime o resumo final; ametadata=print solta o RMS de cada janela de 1s.
+                "-af", (
+                    "aresample=8000,asetnsamples=n=8000:p=0,astats=metadata=1:reset=1,"
+                    "ametadata=print:key=lavfi.astats.Overall.RMS_level"
+                ),
                 "-f", "null",
                 "-",
             ]
@@ -197,35 +198,28 @@ class ClipAnalyzer:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=180,
                 **_SP_KW,
             )
 
             energia: Dict[int, float] = {}
-            in_overall = False
             seg_idx = 0
             for raw in result.stderr.splitlines():
-                line = raw.strip()
-                if "Overall" in line:
-                    in_overall = True
+                if "lavfi.astats.Overall.RMS_level=" not in raw:
                     continue
-                if in_overall and line.startswith("Channel:"):
-                    in_overall = False
-                    continue
-                if in_overall and "RMS level dB" in line:
-                    try:
-                        rms = float(line.split(":")[-1].strip())
-                    except ValueError:
-                        in_overall = False
-                        continue
-                    if rms != rms or rms == float("-inf"):
-                        score = 0.0
-                    else:
-                        # -60dB → 0, -10dB → 1
-                        score = float(np.clip((rms + 60) / 50, 0, 1))
-                    energia[seg_idx] = score
-                    seg_idx += 1
-                    in_overall = False
+                try:
+                    rms = float(raw.split("=")[-1].strip())
+                except ValueError:
+                    rms = float("-inf")
+                if rms != rms or rms == float("-inf"):
+                    score = 0.0
+                else:
+                    # -60dB → 0, -10dB → 1
+                    score = float(np.clip((rms + 60) / 50, 0, 1))
+                energia[seg_idx] = score
+                seg_idx += 1
 
             if not energia:
                 return self._fallback_audio_global()
@@ -289,14 +283,9 @@ class ClipAnalyzer:
         movimento: Dict[int, float],
         energia_audio: Dict[int, float]
     ) -> float:
-        """
-        Calcula score de viralização para um clip.
+        """Score de viralização do clip.
 
-        Pesos atuais (movimento desativado por ser placeholder fixo):
-        - Mudanças de cena (0.30) — dinâmica visual
-        - Energia de áudio per-segundo (0.40) — excitação real do trecho
-        - Duração ideal (0.20) — sweet spot de shorts
-        - Posicionamento (0.10) — início/fim do vídeo
+        Pesos: cenas 0.30, energia de áudio 0.40, duração ideal 0.20, posição no vídeo 0.10.
         """
         scores = []
 
@@ -439,17 +428,7 @@ class ClipAnalyzer:
         return overlap_duracao / min(duracao1, duracao2)
     
     def extrair_clip(self, inicio: int, fim: int, output_path) -> bool:
-        """
-        Extrai um clip do vídeo
-        
-        Args:
-            inicio: Timestamp de início em segundos
-            fim: Timestamp de fim em segundos
-            output_path: Caminho para salvar o clip (str ou Path)
-        
-        Returns:
-            True se sucesso, False caso contrário
-        """
+        """Extrai o trecho [inicio, fim] (segundos) para output_path. Retorna True se deu certo."""
         try:
             # Garantir que output_path seja um Path
             output_path = Path(output_path)

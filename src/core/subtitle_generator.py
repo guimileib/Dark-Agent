@@ -42,17 +42,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         estilo: EstiloLegenda,
         output_path: Path
     ) -> bool:
-        """
-        Gera arquivo ASS com legendas estilizadas
-        
-        Args:
-            transcricao: Resultado da transcrição com segmentos e palavras
-            estilo: Estilo de legenda a aplicar
-            output_path: Caminho do arquivo ASS de saída
-        
-        Returns:
-            bool indicando sucesso
-        """
+        """Gera o .ass estilizado a partir da transcrição. Retorna True se deu certo."""
         logger.info(f"Gerando arquivo ASS: {output_path}")
         
         try:
@@ -298,16 +288,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return f"{horas}:{minutos:02d}:{secs:05.2f}"
     
     def gerar_srt(self, transcricao: dict, output_path: Path) -> bool:
-        """
-        Gera arquivo SRT simples (sem estilos)
-        
-        Args:
-            transcricao: Resultado da transcrição
-            output_path: Caminho do arquivo SRT
-        
-        Returns:
-            bool indicando sucesso
-        """
+        """Gera um .srt simples (sem estilos). Retorna True se deu certo."""
         logger.info(f"Gerando arquivo SRT: {output_path}")
         
         try:

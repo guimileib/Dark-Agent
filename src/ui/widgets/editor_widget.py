@@ -1,4 +1,4 @@
-"""Editor Widget — overlay editor for placing text/images on video with timing."""
+"""Aba Editor: posiciona textos/imagens no vídeo com tempo de início e fim."""
 
 from __future__ import annotations
 
@@ -610,7 +610,7 @@ class EditorWidget(QWidget):
         self._request_frame_preview()
 
     def _load_props(self, elem: OverlayElemento):
-        """Populate the property form from an OverlayElemento."""
+        """Preenche o formulário de propriedades a partir de um OverlayElemento."""
         self._updating_ui = True
 
         self._combo_type.setCurrentText("Texto" if elem.tipo == "texto" else "Imagem")
@@ -651,7 +651,7 @@ class EditorWidget(QWidget):
         self._updating_ui = False
 
     def _on_prop_changed(self, *_):
-        """Write current form values back into the selected element."""
+        """Grava os valores do formulário no elemento selecionado."""
         if self._updating_ui or self._current_idx < 0:
             return
         elem = self._elementos[self._current_idx]

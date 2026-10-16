@@ -1,7 +1,6 @@
-"""
-PyTorch DLL Loading Fix for Windows
-Solves the DLL loading issue on Windows by preloading DLLs and adding to PATH.
-Works both in development and PyInstaller frozen environments.
+"""Corrige o carregamento das DLLs do PyTorch no Windows (dev e .exe).
+
+Precisa ser importado antes de qualquer uso de torch.
 """
 
 import os
@@ -10,7 +9,7 @@ from pathlib import Path
 
 
 def fix_torch_dll():
-    """Add torch library directory to PATH and preload DLLs before importing torch"""
+    """Põe o diretório de libs do torch no PATH e pré-carrega as DLLs."""
     try:
         search_dirs = []
 

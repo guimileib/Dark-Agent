@@ -6,6 +6,7 @@ Pega, sem precisar buildar o .exe, as classes de erro que já quebraram releases
   - .spec sem pathex/datas/hiddenimports obrigatórios (ver CLAUDE.md)
   - __version__ inválido (quebra a comparação do auto-update)
   - Path(__file__) fora dos bootstraps, Gemini key em query param, cookies commitados
+  - docstring com mais de 3 linhas
 
 Uso:
     python scripts/check_structure.py             # checagens estáticas (rápido)
@@ -30,6 +31,8 @@ SPEC = ROOT / "DarkAgentLauncher.spec"
 
 # Únicos arquivos autorizados a usar Path(__file__): rodam antes de config.paths existir.
 PATH_FILE_ALLOWED = {"src/config/paths.py", "src/launcher.py", "src/main.py"}
+
+DOCSTRING_MAX_LINES = 3
 
 SPEC_REQUIRED = {
     "pathex=['src']": "sem isso o PyInstaller não resolve `config.*`, `models.*`, ...",
@@ -169,8 +172,19 @@ def check_code_rules() -> None:
             fail(f"{r}: usa Path(__file__) — importar de config.paths (quebra no .exe)")
         if re.search(r"generativelanguage[^\n]*[?&]key=", text):
             fail(f"{r}: Gemini key na URL — usar header x-goog-api-key")
+        tree = ast.parse(text)
+        for node in [tree] + [
+            x for x in ast.walk(tree)
+            if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]:
+            doc = ast.get_docstring(node)
+            if doc and len([l for l in doc.splitlines() if l.strip()]) > DOCSTRING_MAX_LINES:
+                fail(
+                    f"{r}:{node.body[0].lineno}: docstring com mais de "
+                    f"{DOCSTRING_MAX_LINES} linhas — resumir (ver CLAUDE.md)"
+                )
     if len(errors) == n:
-        ok("Path(__file__) e Gemini key OK")
+        ok(f"Path(__file__), Gemini key e docstrings (≤{DOCSTRING_MAX_LINES} linhas) OK")
 
 
 def check_imports() -> None:

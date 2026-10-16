@@ -15,7 +15,7 @@ from config.settings import settings
 from config.paths import APP_DIR, output_subdir, OUTPUT_RAW, OUTPUT_FINAL, OUTPUT_TEMP, OUTPUT_CLIPS
 from ui.widgets import (
     DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget, EditorWidget,
-    CompilationWidget,
+    CompilationWidget, Top5Widget,
 )
 from core import (
     VideoDownloader, VideoValidator, Transcriber,
@@ -181,10 +181,7 @@ class ProcessadorThread(QThread):
                 video_progress_chunk = 100 / total_videos
 
                 def report_progress(msg, step_percent, _start=video_progress_start, _chunk=video_progress_chunk, _idx=i):
-                    """
-                    step_percent: 0-100 relative to this video
-                    global_percent: 0-100 absolute
-                    """
+                    """step_percent: 0–100 relativo a este vídeo."""
                     current_chunk_progress = (step_percent / 100) * _chunk
                     global_percent = int(_start + current_chunk_progress)
                     # Clamp to 100
@@ -401,11 +398,7 @@ class BatchDownloadThread(QThread):
 
     @staticmethod
     def _aplicar_marcador(video_path: Path, marker: dict, base_out: Path) -> Optional[Path]:
-        """Queima o marcador, escrevendo em final/ e descartando o raw original.
-
-        Quando há marcador, o arquivo deixa de ser "raw" — vai pra final/ e o
-        download bruto é removido pra não duplicar storage.
-        """
+        """Queima o marcador gravando em final/ e apaga o raw (evita duplicar storage)."""
         editor = VideoEditor()
         final_dir = output_subdir(base_out, OUTPUT_FINAL)
         out_path = final_dir / f"{video_path.stem}_marked.mp4"
@@ -504,10 +497,9 @@ class MainWindow(QMainWindow):
             self.aplicar_atualizacao(tag, download_url)
 
     def aplicar_atualizacao(self, tag: str, download_url: str):
-        """Baixa o novo .exe da Release e usa um helper .bat para substituir e relançar.
+        """Baixa o .exe da Release e troca o binário via .bat auxiliar.
 
-        Em modo dev (rodando do código-fonte), apenas informa o usuário —
-        o auto-update binário só faz sentido para o .exe distribuído.
+        Em dev (código-fonte) só avisa o usuário.
         """
         if not getattr(sys, "frozen", False):
             QMessageBox.information(
@@ -736,13 +728,15 @@ class MainWindow(QMainWindow):
         self.upload_widget = UploadWidget()
         self.tab_widget.addTab(self.upload_widget, "Upload")
 
-        # Aba Editor: sub-abas Overlays (editor original) e Compilação
+        # Aba Editor: sub-abas Overlays (editor original), Compilação e Top 5
         # (montador "Adivinhe a Música" / rankings para TikTok e Shorts)
         self.editor_widget = EditorWidget()
         self.compilation_widget = CompilationWidget()
         editor_tabs = QTabWidget()
         editor_tabs.addTab(self.editor_widget, "Overlays")
         editor_tabs.addTab(self.compilation_widget, "Compilação")
+        self.top5_widget = Top5Widget()
+        editor_tabs.addTab(self.top5_widget, "Top 5")
         self.tab_widget.addTab(editor_tabs, "Editor")
 
         # NOTE: previews are generated asynchronously by iniciar_geracao_previews()
@@ -848,11 +842,7 @@ class MainWindow(QMainWindow):
         return self.thread_preview is not None and self.thread_preview.isRunning()
 
     def _maybe_hide_progress(self):
-        """Esconde a barra global apenas se nenhuma operação estiver ativa.
-
-        Com paralelismo, callbacks de uma operação não podem esconder a barra
-        unilateralmente — outra pode ainda estar rodando.
-        """
+        """Esconde a barra global só se nenhuma operação estiver ativa (há operações em paralelo)."""
         if (not any(t is not None and t.isRunning() for t in self.threads.values())
                 and not self._is_preview_thread_running()):
             self.progress_bar.setRange(0, 100)  # restaura modo determinado
@@ -906,10 +896,9 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def atualizar_progresso(self, mensagem: str, percentual: int):
-        """Atualiza barra de progresso do processamento (prioridade sobre preview).
+        """Atualiza a barra de progresso (prioridade sobre o preview).
 
-        Com múltiplos kinds ativos, troca pra modo indeterminado pra evitar a
-        barra ficar pulando entre os percentuais conflitantes de cada operação.
+        Com várias operações ativas, vira indeterminada em vez de pular entre percentuais.
         """
         self.status_label.setText(mensagem)
         active_kinds = sum(1 for t in self.threads.values() if t is not None and t.isRunning())

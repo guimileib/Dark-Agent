@@ -211,9 +211,7 @@ class DrumRoll(QWidget):
 # ---------------------------------------------------------------------------
 
 class InlineDateTimePicker(QWidget):
-    """
-    Modern date + time picker with labeled cards and quick-pick times.
-    """
+    """Seletor de data e hora com cards e horários rápidos."""
     def __init__(self, parent=None):
         super().__init__(parent)
         now = datetime.now()
@@ -458,7 +456,7 @@ class InlineDateTimePicker(QWidget):
 
     # ── Calendar popup styling ───────────────────────────────────────
     def _style_calendar_popup(self, cal: QCalendarWidget) -> None:
-        """Dark-theme styling for the QCalendarWidget popup of QDateEdit."""
+        """Tema escuro para o popup de calendário do QDateEdit."""
         cal.setGridVisible(False)
         cal.setVerticalHeaderFormat(
             QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader
@@ -804,7 +802,7 @@ class HashtagBar(QWidget):
             self._rebuild_chips()
 
     def get_tags(self) -> list[str]:
-        """Return list of hashtag strings without the '#' prefix."""
+        """Lista de hashtags sem o prefixo '#'."""
         return [t.lstrip("#") for t in self._tags]
 
     def clear(self):
@@ -921,7 +919,7 @@ class UploadWidget(QWidget):
     _PINK        = "#EC4899"      # TikTok-pink CTA
 
     def _card_style(self, radius: int = 18) -> str:
-        """Return a QGroupBox stylesheet that looks like an Apple card."""
+        """Stylesheet de QGroupBox no estilo card."""
         return f"""
             QGroupBox {{
                 background: {self._BG_CARD};
@@ -1818,7 +1816,7 @@ class UploadWidget(QWidget):
     # ------------------------------------------------------------------
 
     def set_file(self, path: str):
-        """Add a file path programmatically (called after processing)."""
+        """Adiciona um arquivo programaticamente (chamado após o processamento)."""
         if path not in self._video_metadata:
             self._video_metadata[path] = {"caption": ""}
         self.file_list.addItem(str(path))

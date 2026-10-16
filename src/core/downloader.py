@@ -69,7 +69,7 @@ class VideoDownloader:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_strategies(self, url: str):
-        """Return a fresh list of strategy callables based on URL type."""
+        """Lista nova de estratégias, na ordem adequada ao tipo de URL."""
         if "youtube.com" in url or "youtu.be" in url:
             names = self._DEFAULT_STRATEGIES_YOUTUBE
         else:
@@ -77,12 +77,7 @@ class VideoDownloader:
         return [getattr(self, name) for name in names]
 
     def download(self, url: str, qualidade: str = "720p", timeout: int = 300) -> Tuple[bool, Optional[Path], str]:
-        """
-        Tenta baixar vídeo usando todas as estratégias disponíveis.
-
-        Returns:
-            (sucesso, caminho_arquivo, estrategia_usada)
-        """
+        """Tenta todas as estratégias em ordem. Retorna (sucesso, caminho, estrategia_usada)."""
         logger.info(f"Iniciando download: {url} - Qualidade: {qualidade}")
 
         estrategias = self._get_strategies(url)
@@ -125,10 +120,9 @@ class VideoDownloader:
 
     @staticmethod
     def _tem_video_e_audio(caminho: Path) -> bool:
-        """Confere via ffprobe se o arquivo tem stream de vídeo E de áudio.
+        """Confere via ffprobe se o arquivo tem vídeo E áudio (rejeita intermediários video-only do yt-dlp).
 
-        Evita aceitar intermediários de merge do yt-dlp (video-only) como
-        resultado final. Se o ffprobe não estiver disponível, não bloqueia.
+        Sem ffprobe disponível, não bloqueia.
         """
         try:
             from core.validator import VideoValidator
@@ -144,11 +138,7 @@ class VideoDownloader:
     def _resolve_cookies_file() -> Optional[Path]:
         """Procura cookies.txt em APP_DIR (ao lado do .exe) e em BUNDLE_DIR/src (dev).
 
-        Não há fallback para --cookies-from-browser: o Chrome 127+ usa
-        App-Bound Encryption e o DPAPI falha em decifrar os cookies de fora
-        do processo do navegador (yt-dlp issue #10927). Usuários que precisam
-        de cookies (ex.: YouTube com idade restrita) devem exportar um
-        cookies.txt e colocá-lo ao lado do executável.
+        Sem --cookies-from-browser: Chrome 127+ usa App-Bound Encryption (yt-dlp #10927).
         """
         try:
             from config.paths import APP_DIR, BUNDLE_DIR

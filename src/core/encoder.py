@@ -1,18 +1,6 @@
-"""Detecção e seleção do encoder de vídeo do FFmpeg em runtime.
+"""Detecção do encoder de vídeo (NVENC/QSV/AMF/x264) via probe real de 1 frame.
 
-Detecta encoders por hardware (NVENC, QSV) através de um probe real:
-roda um encode null de 1 frame e checa returncode. `ffmpeg -encoders`
-LISTA encoders compilados, mas não diz se eles funcionam de fato — uma
-GTX 1650 com driver desatualizado, por exemplo, lista `h264_nvenc` mas
-falha na inicialização da sessão.
-
-API pública:
-- `select_encoder()` — retorna nome do encoder ativo respeitando settings
-- `get_video_encoder_args(crf_equiv)` — args `-c:v ...` prontos pra cmd
-- `get_active_encoder_label()` — string curta pra log/UI ("NVENC", etc.)
-
-TODO: aplicar nos caminhos frios também (`adicionar_logo`,
-`redimensionar_video`, `cortar_video`) num follow-up.
+`ffmpeg -encoders` lista o que foi compilado, não o que funciona (ex.: driver NVIDIA antigo).
 """
 
 import logging
@@ -44,11 +32,7 @@ _selected_encoder: Optional[str] = None
 
 
 def _probe(name: str) -> bool:
-    """Testa se um encoder funciona rodando um null encode de 1 frame.
-
-    Retorna True se ffmpeg termina com returncode 0. Resultado é cacheado.
-    libx264 é considerado sempre disponível (ffmpeg base sempre traz).
-    """
+    """Testa o encoder com um null encode de 1 frame (cacheado). libx264 é sempre considerado disponível."""
     if name in _probe_cache:
         return _probe_cache[name]
 
@@ -85,11 +69,9 @@ def _probe(name: str) -> bool:
 
 
 def select_encoder() -> str:
-    """Decide o encoder ativo. Cacheado por processo.
+    """Decide o encoder ativo (cacheado por processo) a partir de settings.video_encoder.
 
-    Respeita `settings.video_encoder`. Se "auto", testa _AUTO_ORDER em ordem.
-    Se forçado para um encoder específico que falha no probe, cai pro libx264
-    e loga warning.
+    Se o encoder forçado falhar no probe, cai para libx264.
     """
     global _selected_encoder
     if _selected_encoder is not None:
@@ -140,16 +122,9 @@ def get_active_encoder_label() -> str:
 
 
 def get_video_encoder_args(crf_equiv: int = 23) -> List[str]:
-    """Retorna o slice `-c:v ...` apropriado para o encoder ativo.
+    """Args `-c:v ...` do encoder ativo, mapeando crf_equiv (escala do x264) para a qualidade nativa.
 
-    Args:
-        crf_equiv: valor de qualidade equivalente ao CRF do libx264 (lower = melhor).
-            Mapeado para o controle de qualidade nativo de cada encoder.
-
-    Returns:
-        Lista de strings pra concatenar no comando ffmpeg.
-        SEMPRE inclui `-pix_fmt yuv420p` e `-profile:v high` para garantir
-        compatibilidade com TikTok/YouTube/etc.
+    Sempre inclui `-pix_fmt yuv420p -profile:v high` (compatibilidade TikTok/YouTube).
     """
     enc = select_encoder()
 

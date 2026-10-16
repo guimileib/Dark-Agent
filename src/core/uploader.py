@@ -1,15 +1,6 @@
-"""
-TikTokUploader — multi-account, multi-browser upload core.
+"""Upload para TikTok com múltiplas contas e navegadores (cookies por conta).
 
-Cookies are stored per account as:
-    <cookies_dir>/cookies_<account_name>.txt
-
-Anti-detection strategy:
-  - Chrome/Brave: undetected-chromedriver (uc) patches the binary-level
-    Selenium fingerprints that TikTok's bot-detection reads.
-  - All browsers: JS patches for navigator.webdriver, plugins, etc.
-  - Human-like random delays between actions.
-  - Uploads always run non-headless (TikTok aggressively blocks headless).
+Anti-detecção: undetected-chromedriver no Chrome/Brave, patches JS, delays humanos, nunca headless.
 """
 from __future__ import annotations
 
@@ -58,7 +49,7 @@ logger = logging.getLogger("DarkAgent.Uploader")
 # ---------------------------------------------------------------------------
 
 def _cookies_dir() -> Path:
-    """Return (and create) the directory where per-account cookies live."""
+    """Retorna (e cria) o diretório dos cookies por conta."""
     from config.paths import ACCOUNTS_DIR
     ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
     return ACCOUNTS_DIR
@@ -78,7 +69,7 @@ def _accounts_index() -> Path:
 # ---------------------------------------------------------------------------
 
 def list_accounts() -> list[dict]:
-    """Return [{'name': str, 'cookies_path': str}, ...]"""
+    """Lista as contas: [{'name': str, 'cookies_path': str}, ...]."""
     idx = _accounts_index()
     if not idx.exists():
         return []
@@ -160,7 +151,7 @@ setInterval(() => {
 
 
 def _apply_stealth_js(driver) -> None:
-    """Execute anti-fingerprint JS on the current page."""
+    """Executa o JS anti-fingerprint na página atual."""
     try:
         driver.execute_script(_STEALTH_JS)
     except Exception as exc:
@@ -168,7 +159,7 @@ def _apply_stealth_js(driver) -> None:
 
 
 def _apply_stealth_cdp(driver) -> None:
-    """Apply Chrome DevTools Protocol patches (only works with uc / Chrome)."""
+    """Aplica patches via Chrome DevTools Protocol (só com uc/Chrome)."""
     try:
         driver.execute_cdp_cmd(
             "Page.addScriptToEvaluateOnNewDocument",
@@ -180,7 +171,7 @@ def _apply_stealth_cdp(driver) -> None:
 
 
 def _human_delay(min_s: float = 0.8, max_s: float = 2.2) -> None:
-    """Sleep for a random human-like duration."""
+    """Espera um tempo aleatório, imitando um humano."""
     time.sleep(random.uniform(min_s, max_s))
 
 
@@ -189,7 +180,7 @@ def _human_delay(min_s: float = 0.8, max_s: float = 2.2) -> None:
 # ---------------------------------------------------------------------------
 
 def _find_brave_path() -> str | None:
-    """Locate the Brave executable on Windows."""
+    """Localiza o executável do Brave no Windows."""
     candidates = []
     for env_key in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
         val = os.environ.get(env_key, "")
@@ -201,7 +192,7 @@ def _find_brave_path() -> str | None:
 
 
 def _brave_major_version(brave_path: str) -> str | None:
-    """Return the major version number string of the Brave binary."""
+    """Versão major do binário do Brave (string)."""
     try:
         out = subprocess.check_output(
             [brave_path, "--version"], stderr=subprocess.DEVNULL, **_SP_KW
@@ -216,15 +207,9 @@ def _brave_major_version(brave_path: str) -> str | None:
 
 
 def _make_driver(browser_name: str, headless: bool = False):
-    """
-    Build and return a WebDriver for the requested browser.
+    """Cria o WebDriver do navegador pedido.
 
-    Chrome & Brave always use undetected-chromedriver (uc) when available,
-    which patches the driver binary to remove all Selenium fingerprints.
-    Firefox and Edge fall back to standard Selenium.
-
-    NOTE: TikTok aggressively detects headless Chrome — uploads should
-    always use headless=False (enforced in TikTokUploader.upload()).
+    Chrome/Brave usam undetected-chromedriver quando disponível; Firefox/Edge usam Selenium padrão.
     """
     browser_name = browser_name.lower()
 
@@ -339,16 +324,7 @@ def _make_driver(browser_name: str, headless: bool = False):
 # ---------------------------------------------------------------------------
 
 class TikTokUploader:
-    """
-    Multi-account TikTok uploader.
-
-    Parameters
-    ----------
-    account_name : str
-        Human-readable name for this account (used to locate its cookies file).
-        Pass None to fall back to the legacy 'cookies.txt' path (single-account
-        backwards compat).
-    """
+    """Uploader do TikTok por conta; account_name=None usa o cookies.txt legado."""
 
     def __init__(self, account_name: str | None = None):
         if account_name:
@@ -366,9 +342,9 @@ class TikTokUploader:
     # ------------------------------------------------------------------
 
     def login(self, browser_name: str = "chrome") -> bool:
-        """
-        Open a browser window so the user can log into TikTok.
-        Cookies are saved to self.cookies_path when sessionid is detected.
+        """Abre o navegador para o usuário logar no TikTok.
+
+        Os cookies são salvos em self.cookies_path quando o sessionid aparece.
         """
         self.logger.info(f"Opening {browser_name} for login (account: {self.account_name})…")
         driver = None
@@ -446,18 +422,9 @@ class TikTokUploader:
         browser_name: str = "chrome",
         schedule_time=None,
     ) -> bool:
-        """
-        Upload *video_path* to TikTok using the account's saved cookies.
-        Works for all supported browsers (chrome, brave, firefox, edge).
+        """Envia video_path ao TikTok com os cookies da conta.
 
-        Parameters
-        ----------
-        headless : bool
-            Kept for API compatibility — ALWAYS forced to False for uploads.
-            TikTok aggressively blocks headless sessions regardless of spoofing.
-        schedule_time : str | None
-            If given, tells TikTok Studio to schedule the post.
-            Format expected by tiktok_uploader: 'YYYY-MM-DD HH:MM:SS'
+        headless é sempre forçado para False (TikTok bloqueia headless); schedule_time: 'YYYY-MM-DD HH:MM:SS'.
         """
         # Force non-headless: TikTok detects headless Chrome even with UC
         if headless:
@@ -540,13 +507,9 @@ class TikTokUploader:
         headless: bool = False,
         browser_name: str = "chrome",
     ) -> bool:
-        """
-        Upload multiple videos to TikTok in a single browser session.
-        Each task is a dict containing:
-          - path: str
-          - title: str
-          - hashtags: list[str] (optional)
-          - schedule_time: str (optional)
+        """Envia vários vídeos numa só sessão do navegador.
+
+        Cada task: {path, title, hashtags?, schedule_time?}.
         """
         headless = False  # always
 

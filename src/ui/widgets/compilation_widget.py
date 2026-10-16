@@ -1,9 +1,4 @@
-"""Widget de compilação — monta vídeos "Adivinhe a Música" / rankings.
-
-Fluxo: usuário adiciona 2–5 clipes (um por música / momento), define rótulo
-opcional por clipe, escolhe o PNG do canal e a transição; o widget junta
-tudo via core.compilation e salva em output/final.
-"""
+"""Aba de compilação: 2–5 clipes com rótulo, logo e transição, montados via core.compilation em output/final."""
 
 from datetime import datetime
 from pathlib import Path
