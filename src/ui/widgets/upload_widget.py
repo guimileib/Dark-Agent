@@ -4,7 +4,9 @@ UploadWidget — multiple TikTok accounts, multi-browser, post-now / scheduled.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+import re
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PyQt6.QtCore import (
@@ -34,93 +36,214 @@ logger = logging.getLogger(__name__)
 # TikTok caption character limit (may vary by region)
 TIKTOK_CAPTION_LIMIT = 4000
 
+# Janela aceita pelo agendador do TikTok (tiktok-uploader descarta fora disso)
+SCHEDULE_MIN_LEAD = timedelta(minutes=20)
+SCHEDULE_MAX_AHEAD = timedelta(days=10)
+
+
+def build_daily_schedule(
+    n: int, times: list[str], start_date: date, now: datetime | None = None
+) -> list[datetime]:
+    """Distribui n vídeos nos horários diários ('HH:MM'), dia após dia, a partir de start_date.
+
+    Horários a menos de 20 min de agora são pulados (TikTok rejeitaria).
+    """
+    now = now or datetime.now()
+    clock = sorted({tuple(map(int, t.split(":"))) for t in times})
+    if n <= 0 or not clock:
+        return []
+    slots: list[datetime] = []
+    day = start_date
+    while len(slots) < n:
+        for h, m in clock:
+            dt = datetime(day.year, day.month, day.day, h, m)
+            if dt - now >= SCHEDULE_MIN_LEAD:
+                slots.append(dt)
+                if len(slots) == n:
+                    break
+        day += timedelta(days=1)
+    return slots
+
 
 # ---------------------------------------------------------------------------
 # AI Generator Thread
 # ---------------------------------------------------------------------------
-class AIGeneratorThread(QThread):
-    finished = pyqtSignal(bool, str, list)  # success, text, tags
+# 2.0-flash foi desligado em 06/2026; o alias "latest" é fallback se o 1º também sair do ar.
+_GEMINI_MODELS = ("gemini-3.8-flash", "gemini-flash-latest")
 
-    def __init__(self, api_key: str, context: str, language: str = "Português"):
+
+# Teto de vídeos por request: lotes maiores são divididos (limite de tokens de saída).
+_GEMINI_BATCH_SIZE = 20
+
+
+@dataclass
+class CaptionResult:
+    """Descrição + hashtags (sem '#') geradas para um vídeo."""
+    description: str
+    hashtags: list[str] = field(default_factory=list)
+
+
+# Structured output: o Gemini devolve JSON validado contra este schema.
+_CAPTIONS_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "videos": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "id": {"type": "INTEGER"},
+                    "description": {"type": "STRING"},
+                    "hashtags": {"type": "ARRAY", "items": {"type": "STRING"}},
+                },
+                "required": ["id", "description", "hashtags"],
+            },
+        },
+    },
+    "required": ["videos"],
+}
+
+
+def _gemini_request(api_key: str, body: dict) -> dict:
+    """POST no generateContent, caindo para o próximo modelo em 404. Retorna o JSON da resposta."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    for i, model in enumerate(_GEMINI_MODELS):
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+            },
+        )
+        try:
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read())
+        except urllib.error.HTTPError as e:
+            # 404 = modelo desligado/inexistente: tenta o próximo
+            if e.code != 404 or i == len(_GEMINI_MODELS) - 1:
+                raise
+            logger.warning(f"Gemini model '{model}' indisponível (404), tentando o próximo.")
+    raise RuntimeError("Nenhum modelo Gemini disponível.")
+
+
+def _gemini_captions_batch(
+    api_key: str, contexts: list[str], language: str
+) -> dict[int, CaptionResult]:
+    """Gera descrição + hashtags de N vídeos num único request.
+
+    Retorna {índice em contexts: CaptionResult}; índices ausentes = a IA pulou o vídeo.
+    """
+    import json
+
+    videos_txt = "\n".join(f"- id {i}: {ctx}" for i, ctx in enumerate(contexts))
+    prompt = f"""
+Você é um especialista em redes sociais (TikTok, Reels, Shorts).
+Escreva uma descrição e hashtags virais para CADA um dos {len(contexts)} vídeos abaixo.
+Cada vídeo deve ter texto próprio, sem repetir a mesma descrição entre vídeos.
+
+Vídeos (id: contexto):
+{videos_txt}
+
+Regras:
+- Idioma: {language}.
+- "description": texto chamativo, envolvente (com emojis), sem hashtags.
+- "hashtags": 3 a 8 hashtags relevantes, sem o caractere '#'.
+- Devolva exatamente um item por id recebido, usando o mesmo id.
+"""
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": _CAPTIONS_SCHEMA,
+        },
+    }
+    result = _gemini_request(api_key, body)
+
+    text_response = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+    # Defensivo: alguns modelos ainda embrulham em ```json mesmo com responseMimeType
+    text_response = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_response)
+
+    captions: dict[int, CaptionResult] = {}
+    for v in json.loads(text_response).get("videos", []):
+        idx = v.get("id")
+        if isinstance(idx, int) and 0 <= idx < len(contexts) and idx not in captions:
+            captions[idx] = CaptionResult(
+                description=str(v.get("description", "")).strip(),
+                hashtags=[str(t).strip().lstrip("#") for t in v.get("hashtags", []) if str(t).strip()],
+            )
+    return captions
+
+
+def _http_error_message(e) -> str:
+    """Extrai a mensagem útil de um HTTPError do Gemini (com dica no 403)."""
+    import json
+
+    try:
+        error_body = e.read().decode("utf-8")
+        # Try to parse it as JSON to get the actual message
+        err_json = json.loads(error_body)
+        if "error" in err_json and "message" in err_json["error"]:
+            msg = f"HTTP {e.code}: {err_json['error']['message']}"
+        else:
+            msg = f"HTTP {e.code}: {error_body}"
+    except Exception:
+        msg = str(e)
+
+    # Se for 403 e a chave estiver incorreta ou sem permissões
+    if e.code == 403:
+        from config.paths import get_user_config_file
+        config_path = get_user_config_file()
+        msg += f"\n\nDica: Mude sua chave de API nas configurações ou verifique se você possui os acessos necessários na conta do Google. Caso a chave esteja errada, apague-a no {config_path} para que o programa peça novamente."
+    return msg
+
+
+class AIGeneratorThread(QThread):
+    """Gera descrição + hashtags para (path, contexto): um request por lote de vídeos."""
+    item_done = pyqtSignal(str, str, list)   # path, description, tags
+    item_failed = pyqtSignal(str, str)       # path, error message
+    progress = pyqtSignal(int, int)          # done, total
+
+    def __init__(self, api_key: str, items: list[tuple[str, str]], language: str = "Português"):
         super().__init__()
         self.api_key = api_key
-        self.context = context
+        self.items = items
         self.language = language
 
     def run(self):
-        import urllib.request
         import urllib.error
-        import json
 
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-
-        prompt = f"""
-Você é um especialista em redes sociais (TikTok, Reels, Shorts).
-O usuário quer uma descrição e hashtags virais para um vídeo.
-Contexto do vídeo: {self.context}
-
-Por favor, escreva o conteúdo inteiramente no idioma: {self.language}.
-
-Responda SOMENTE em JSON no seguinte formato (sem bloco markdown):
-{{
-  "description": "Texto chamativo, envolvente (com emojis). Não inclua as hashtags aqui.",
-  "hashtags": ["tag1", "tag2", "tag3"]
-}}
-"""
-        data = {
-            "contents": [{"parts": [{"text": prompt}]}]
-        }
-
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key,
-            },
-        )
-        
-        try:
-            with urllib.request.urlopen(req) as response:
-                result_raw = response.read()
-                result = json.loads(result_raw)
-                
-                text_response = result["candidates"][0]["content"]["parts"][0]["text"]
-                text_response = text_response.strip()
-                
-                if text_response.startswith("```json"):
-                    text_response = text_response[7:]
-                if text_response.startswith("```"):
-                    text_response = text_response[3:]
-                if text_response.endswith("```"):
-                    text_response = text_response[:-3]
-                    
-                data_json = json.loads(text_response.strip())
-                desc = data_json.get("description", "")
-                tags = data_json.get("hashtags", [])
-                
-                self.finished.emit(True, desc, tags)
-        except urllib.error.HTTPError as e:
+        total = len(self.items)
+        for start in range(0, total, _GEMINI_BATCH_SIZE):
+            if self.isInterruptionRequested():
+                return
+            chunk = self.items[start:start + _GEMINI_BATCH_SIZE]
             try:
-                error_body = e.read().decode("utf-8")
-                # Try to parse it as JSON to get the actual message
-                err_json = json.loads(error_body)
-                if "error" in err_json and "message" in err_json["error"]:
-                    msg = f"HTTP {e.code}: {err_json['error']['message']}"
+                captions = _gemini_captions_batch(
+                    self.api_key, [ctx for _, ctx in chunk], self.language
+                )
+            except urllib.error.HTTPError as e:
+                msg = _http_error_message(e)
+                for path, _ in chunk:
+                    self.item_failed.emit(path, msg)
+                if e.code in (401, 403):
+                    return  # chave inválida: não adianta tentar os próximos
+                continue
+            except Exception as e:
+                for path, _ in chunk:
+                    self.item_failed.emit(path, str(e))
+                continue
+
+            for i, (path, _) in enumerate(chunk):
+                cap = captions.get(i)
+                if cap is None:
+                    self.item_failed.emit(path, "A IA não retornou legenda para este vídeo.")
                 else:
-                    msg = f"HTTP {e.code}: {error_body}"
-            except Exception:
-                msg = str(e)
-            
-            # Se for 403 e a chave estiver incorreta ou sem permissões
-            if e.code == 403:
-                from config.paths import get_user_config_file
-                config_path = get_user_config_file()
-                msg += f"\n\nDica: Mude sua chave de API nas configurações ou verifique se você possui os acessos necessários na conta do Google. Caso a chave esteja errada, apague-a no {config_path} para que o programa peça novamente."
-                
-            self.finished.emit(False, msg, [])
-        except Exception as e:
-            self.finished.emit(False, str(e), [])
+                    self.item_done.emit(path, cap.description, cap.hashtags)
+            self.progress.emit(min(start + len(chunk), total), total)
 
 # ---------------------------------------------------------------------------
 # Custom drum-roll widget (kept for standalone use)
@@ -212,6 +335,8 @@ class DrumRoll(QWidget):
 
 class InlineDateTimePicker(QWidget):
     """Seletor de data e hora com cards e horários rápidos."""
+    changed = pyqtSignal()  # só em edição pelo usuário (não em set_datetime)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         now = datetime.now()
@@ -366,8 +491,34 @@ class InlineDateTimePicker(QWidget):
 
         self._update_summary()
 
-        self._time_edit.timeChanged.connect(lambda _: self._update_summary())
-        self._date_edit.dateChanged.connect(lambda _: self._update_summary())
+        self._time_edit.timeChanged.connect(lambda _: self._on_edited())
+        self._date_edit.dateChanged.connect(lambda _: self._on_edited())
+
+    def _on_edited(self):
+        self._update_summary()
+        self.changed.emit()
+
+    def set_datetime(self, dt: datetime | None):
+        """Mostra dt sem emitir `changed`; None = vídeo ainda sem horário."""
+        if dt is not None:
+            for w in (self._time_edit, self._date_edit):
+                w.blockSignals(True)
+            self._date_edit.setDate(QDate(dt.year, dt.month, dt.day))
+            self._time_edit.setTime(QTime(dt.hour, dt.minute))
+            for w in (self._time_edit, self._date_edit):
+                w.blockSignals(False)
+            self._update_summary()
+        else:
+            self._lbl_summary.setText(
+                "⚠ Este vídeo ainda não tem horário — ajuste acima ou use o Padrão diário."
+            )
+
+    def shortcut_times(self) -> list[str]:
+        return list(self._shortcut_times)
+
+    def set_shortcut_times(self, times: list[str]):
+        self._shortcut_times = sorted(times)
+        self._build_favorites_row()
 
     def _update_summary(self):
         dt = self.selected_datetime()
@@ -667,14 +818,75 @@ class ShortcutsEditorDialog(QDialog):
         return sorted(self._times)
 
 
+class DailyPatternDialog(ShortcutsEditorDialog):
+    """Escolhe data inicial + horários do dia e prévia da distribuição dos vídeos."""
+
+    def __init__(self, times: list[str], n_videos: int, parent=None):
+        self._n_videos = n_videos
+        self._lbl_preview: QLabel | None = None
+        super().__init__(times, parent)
+        self.setWindowTitle("Padrão diário de postagem")
+        self.setMinimumWidth(380)
+
+        outer = self.layout()
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Começar em:"))
+        self._start = QDateEdit(QDate.currentDate())
+        self._start.setDisplayFormat("dd/MM/yyyy")
+        self._start.setMinimumDate(QDate.currentDate())
+        self._start.setCalendarPopup(True)
+        self._start.setStyleSheet(
+            "QDateEdit { background: #1e293b; color: #e2e8f0; border: 1px solid rgba(59,130,246,0.25);"
+            " border-radius: 6px; padding: 4px 8px; font-size: 13px; font-weight: 700; }"
+        )
+        self._start.dateChanged.connect(lambda _: self._update_preview())
+        top.addWidget(self._start)
+        top.addStretch()
+        outer.insertLayout(0, top)
+
+        intro = QLabel(f"{n_videos} vídeo(s) serão distribuídos nestes horários, um dia após o outro.")
+        intro.setWordWrap(True)
+        outer.insertWidget(1, intro)
+
+        self._lbl_preview = QLabel()
+        self._lbl_preview.setWordWrap(True)
+        outer.insertWidget(outer.count() - 1, self._lbl_preview)
+        self._update_preview()
+
+    def _refresh_list(self) -> None:
+        super()._refresh_list()
+        self._update_preview()
+
+    def _update_preview(self) -> None:
+        if self._lbl_preview is None:
+            return
+        slots = build_daily_schedule(self._n_videos, self._times, self.start_date())
+        if not slots:
+            self._lbl_preview.setText("Adicione pelo menos um horário.")
+            self._lbl_preview.setStyleSheet("color: #fca5a5;")
+            return
+        days = len({d.date() for d in slots})
+        txt = (f"{len(self._times)} por dia → {days} dia(s).\n"
+               f"1º: {slots[0]:%d/%m %H:%M}   ·   último: {slots[-1]:%d/%m %H:%M}")
+        if slots[-1] - datetime.now() > SCHEDULE_MAX_AHEAD:
+            txt += "\n⚠ Passa do limite de 10 dias do TikTok — adicione horários ou envie menos vídeos."
+            self._lbl_preview.setStyleSheet("color: #fca5a5;")
+        else:
+            self._lbl_preview.setStyleSheet("color: #93c5fd;")
+        self._lbl_preview.setText(txt)
+
+    def start_date(self) -> date:
+        return self._start.date().toPyDate()
+
+
 # ---------------------------------------------------------------------------
 # Hashtag chip widget
 # ---------------------------------------------------------------------------
 
 class HashtagBar(QWidget):
-    """
-    Shows added hashtags as removable chips — like TikTok Studio.
-    """
+    """Hashtags como chips removíveis (estilo TikTok Studio)."""
+    changed = pyqtSignal()  # só em edição pelo usuário (não em set_tags)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._tags: list[str] = []
@@ -756,11 +968,12 @@ class HashtagBar(QWidget):
             self._input.clear()
 
     def _add_tag(self, raw: str):
-        tag = "#" + raw.lstrip("#")
-        if tag in self._tags:
+        tag = "#" + raw.strip().lstrip("#")
+        if tag == "#" or tag in self._tags:
             return
         self._tags.append(tag)
         self._rebuild_chips()
+        self.changed.emit()
 
     def _rebuild_chips(self):
         # Remove all except the stretch at end
@@ -800,14 +1013,23 @@ class HashtagBar(QWidget):
         if tag in self._tags:
             self._tags.remove(tag)
             self._rebuild_chips()
+            self.changed.emit()
 
     def get_tags(self) -> list[str]:
         """Lista de hashtags sem o prefixo '#'."""
         return [t.lstrip("#") for t in self._tags]
 
-    def clear(self):
-        self._tags.clear()
+    def set_tags(self, tags: list[str]):
+        """Substitui as hashtags sem emitir `changed`."""
+        self._tags = []
+        for t in tags:
+            tag = "#" + t.strip().lstrip("#")
+            if tag != "#" and tag not in self._tags:
+                self._tags.append(tag)
         self._rebuild_chips()
+
+    def clear(self):
+        self.set_tags([])
 
 
 # ---------------------------------------------------------------------------
@@ -836,7 +1058,7 @@ class LoginThread(QThread):
 
 class UploaderThread(QThread):
     progress = pyqtSignal(str)
-    finished = pyqtSignal(bool, str)
+    done = pyqtSignal(list)  # paths que falharam ([] = tudo ok)
 
     def __init__(
         self,
@@ -853,20 +1075,19 @@ class UploaderThread(QThread):
 
     def run(self):
         uploader = TikTokUploader(self.account_name)
+        self.progress.emit(
+            f"🚀 Enviando {len(self.tasks)} vídeo(s) em lote (conta '{self.account_name}')…"
+        )
         try:
-            self.progress.emit(f"🚀 Iniciando envio em lote (conta '{self.account_name}')…")
-
-            ok = uploader.upload_batch(
+            failed = uploader.upload_batch(
                 tasks=self.tasks,
                 headless=self.headless,
                 browser_name=self.browser,
             )
-            if ok:
-                self.finished.emit(True, "Todos os uploads concluídos com sucesso!")
-            else:
-                self.finished.emit(False, "Falha em um ou mais uploads. Verifique os cookies e os arquivos.")
         except Exception as exc:
-            self.finished.emit(False, f"Erro: {exc}")
+            logger.error(f"Upload thread error: {exc}", exc_info=True)
+            failed = [t["path"] for t in self.tasks]
+        self.done.emit(failed)
 
 
 # ---------------------------------------------------------------------------
@@ -900,6 +1121,7 @@ class UploadWidget(QWidget):
         self._countdown_timer.start(1000)
         self.login_thread: LoginThread | None = None
         self.upload_thread: UploaderThread | None = None
+        self._ai_thread: AIGeneratorThread | None = None
         self._init_ui()
         self._refresh_accounts()
 
@@ -1184,6 +1406,11 @@ class UploadWidget(QWidget):
         meta_layout.setSpacing(14)
         meta_layout.setContentsMargins(0, 12, 0, 0)
 
+        self.lbl_current_video = QLabel()
+        self.lbl_current_video.setWordWrap(True)
+        self.lbl_current_video.setStyleSheet(self._label_style(11, bold=False, color=self._TEXT_SEC))
+        meta_layout.addWidget(self.lbl_current_video)
+
         # Description field
         lbl_desc_row = QHBoxLayout()
         lbl_desc = QLabel("Descrição")
@@ -1232,6 +1459,13 @@ class UploadWidget(QWidget):
         self.btn_ai_desc.clicked.connect(self._generate_ai_desc)
         lbl_desc_row.addWidget(self.btn_ai_desc)
 
+        self.btn_ai_all = QPushButton("✨ IA p/ todos")
+        self.btn_ai_all.setToolTip("Gera descrição + hashtags para todos os vídeos da lista")
+        self.btn_ai_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ai_all.setStyleSheet(self.btn_ai_desc.styleSheet())
+        self.btn_ai_all.clicked.connect(self._generate_ai_all)
+        lbl_desc_row.addWidget(self.btn_ai_all)
+
         self.btn_change_api_key = QPushButton("🔑")
         self.btn_change_api_key.setToolTip("Alterar API Key do Gemini")
         self.btn_change_api_key.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1270,9 +1504,17 @@ class UploadWidget(QWidget):
         meta_layout.addWidget(self._divider())
 
         # Hashtags
+        ht_row = QHBoxLayout()
         lbl_ht = QLabel("# Hashtags")
         lbl_ht.setStyleSheet(self._label_style(12))
-        meta_layout.addWidget(lbl_ht)
+        ht_row.addWidget(lbl_ht)
+        ht_row.addStretch()
+        self.btn_tags_all = QPushButton("Aplicar a todos")
+        self.btn_tags_all.setToolTip("Copia as hashtags deste vídeo para todos os vídeos da lista")
+        self.btn_tags_all.setStyleSheet(self._btn_secondary_style())
+        self.btn_tags_all.clicked.connect(self._apply_tags_to_all)
+        ht_row.addWidget(self.btn_tags_all)
+        meta_layout.addLayout(ht_row)
 
         self.hashtag_bar = HashtagBar()
         meta_layout.addWidget(self.hashtag_bar)
@@ -1345,30 +1587,38 @@ class UploadWidget(QWidget):
         toggle_row.addStretch()
         sched_layout.addLayout(toggle_row)
 
+        self.sched_panel = QWidget()
+        sched_panel_layout = QVBoxLayout(self.sched_panel)
+        sched_panel_layout.setContentsMargins(0, 0, 0, 0)
+        sched_panel_layout.setSpacing(8)
+
+        pattern_row = QHBoxLayout()
+        self.btn_daily_pattern = QPushButton("📆  Padrão diário…")
+        self.btn_daily_pattern.setToolTip(
+            "Distribui os vídeos da lista em horários fixos por dia (ex.: 15h, 19h, 23h)"
+        )
+        self.btn_daily_pattern.setStyleSheet(self._btn_secondary_style())
+        self.btn_daily_pattern.clicked.connect(self._open_daily_pattern)
+        pattern_row.addWidget(self.btn_daily_pattern)
+        self.lbl_sched_info = QLabel()
+        self.lbl_sched_info.setStyleSheet(self._label_style(11, bold=False, color=self._TEXT_SEC))
+        pattern_row.addWidget(self.lbl_sched_info)
+        pattern_row.addStretch()
+        sched_panel_layout.addLayout(pattern_row)
+
+        self.lbl_sched_video = QLabel()
+        self.lbl_sched_video.setStyleSheet(self._label_style(11, bold=False, color=self._TEXT_SEC))
+        sched_panel_layout.addWidget(self.lbl_sched_video)
+
         self.dt_picker = InlineDateTimePicker()
-        self.dt_picker.setVisible(False)
-        
-        self.interval_widget = QWidget()
-        interval_layout = QHBoxLayout(self.interval_widget)
-        interval_layout.setContentsMargins(0, 0, 0, 0)
-        lbl_interval = QLabel("Intervalo entre posts (minutos):")
-        lbl_interval.setStyleSheet(self._label_style(12))
-        self.spin_interval = QSpinBox()
-        self.spin_interval.setRange(15, 1440)
-        self.spin_interval.setValue(60)
-        self.spin_interval.setStyleSheet(self._field_style(10))
-        interval_layout.addWidget(lbl_interval)
-        interval_layout.addWidget(self.spin_interval)
-        interval_layout.addStretch()
-        self.interval_widget.setVisible(False)
+        self.dt_picker.changed.connect(self._on_schedule_edited)
+        sched_panel_layout.addWidget(self.dt_picker)
+        self.sched_panel.setVisible(False)
 
         # radio_now/later are now QPushButtons — use clicked instead of toggled
-        self.radio_now.clicked.connect(lambda: self.dt_picker.setVisible(False))
-        self.radio_now.clicked.connect(lambda: self.interval_widget.setVisible(False))
-        self.radio_later.clicked.connect(lambda: self.dt_picker.setVisible(True))
-        self.radio_later.clicked.connect(lambda: self.interval_widget.setVisible(True))
-        sched_layout.addWidget(self.dt_picker)
-        sched_layout.addWidget(self.interval_widget)
+        self.radio_now.clicked.connect(lambda: self.sched_panel.setVisible(False))
+        self.radio_later.clicked.connect(lambda: self.sched_panel.setVisible(True))
+        sched_layout.addWidget(self.sched_panel)
         root.addWidget(sched_card)
 
         # ── 5. Queue card (hidden until scheduled posts exist) ────────
@@ -1391,7 +1641,11 @@ class UploadWidget(QWidget):
         """)
         queue_layout.addWidget(self.queue_list)
 
-        btn_cancel = QPushButton("Cancelar Selecionado")
+        btn_cancel = QPushButton("Remover da lista")
+        btn_cancel.setToolTip(
+            "Só tira da lista local. O agendamento já está no TikTok — "
+            "para cancelar, exclua o post agendado no TikTok Studio."
+        )
         btn_cancel.setStyleSheet(self._btn_secondary_style())
         btn_cancel.clicked.connect(self._cancel_selected)
         queue_layout.addWidget(btn_cancel)
@@ -1447,17 +1701,53 @@ class UploadWidget(QWidget):
         # Connect signals for per-video metadata
         self.file_list.currentItemChanged.connect(self._on_file_selected)
         self.txt_caption.textChanged.connect(self._on_meta_edited)
+        self.hashtag_bar.changed.connect(self._on_meta_edited)
         self._update_meta_fields()
 
     # ------------------------------------------------------------------
     # Per-video metadata helpers
     # ------------------------------------------------------------------
 
+    _PATH_ROLE = Qt.ItemDataRole.UserRole
+
+    def _item_path(self, item: QListWidgetItem) -> str:
+        return item.data(self._PATH_ROLE)
+
+    def _find_item(self, path: str) -> QListWidgetItem | None:
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            if self._item_path(item) == path:
+                return item
+        return None
+
+    def _add_video(self, path: str) -> None:
+        """Adiciona o vídeo à lista (ignora duplicados) com metadados vazios."""
+        if path in self._video_metadata:
+            return
+        self._video_metadata[path] = {"caption": "", "hashtags": [], "status": None, "schedule": None}
+        item = QListWidgetItem()
+        item.setData(self._PATH_ROLE, path)
+        item.setToolTip(path)
+        self.file_list.addItem(item)
+        self._refresh_item(path)
+        if self.file_list.currentItem() is None:
+            self.file_list.setCurrentItem(item)
+
+    def _refresh_item(self, path: str) -> None:
+        """Atualiza o texto do item: status do envio + se já tem legenda/hashtags."""
+        item = self._find_item(path)
+        data = self._video_metadata.get(path)
+        if item is None or data is None:
+            return
+        status = {"ok": "🚀", "fail": "❌"}.get(data.get("status"), "")
+        filled = "📝" if data["caption"].strip() or data["hashtags"] else "⬜"
+        n_tags = len(data["hashtags"])
+        tags = f"  · {n_tags} #" if n_tags else ""
+        when = f"  · 🕒 {data['schedule']:%d/%m %H:%M}" if data.get("schedule") else ""
+        item.setText(f"{status}{filled}  {Path(path).name}{tags}{when}")
+
     def _on_file_selected(self, current, previous):
-        if current:
-            self._current_video = current.text()
-        else:
-            self._current_video = None
+        self._current_video = self._item_path(current) if current else None
         self._update_meta_fields()
 
     def _update_meta_fields(self):
@@ -1466,51 +1756,123 @@ class UploadWidget(QWidget):
             self.txt_caption.clear()
             self.txt_caption.setEnabled(False)
             self.txt_caption.blockSignals(False)
+            self.hashtag_bar.set_tags([])
+            self.hashtag_bar.setEnabled(False)
+            self.lbl_current_video.setText("Selecione um vídeo na lista para editar descrição e hashtags.")
+            self.dt_picker.setEnabled(False)
+            self.lbl_sched_video.setText("Selecione um vídeo para definir o horário dele.")
+            self._update_sched_info()
             return
 
         self.txt_caption.setEnabled(True)
-        data = self._video_metadata.get(self._current_video, {"caption": ""})
+        self.hashtag_bar.setEnabled(True)
+        self.lbl_current_video.setText(f"Editando: {Path(self._current_video).name}")
+        data = self._video_metadata.get(self._current_video, {"caption": "", "hashtags": []})
         self.txt_caption.blockSignals(True)
         self.txt_caption.setPlainText(data.get("caption", ""))
         self.txt_caption.blockSignals(False)
+        self.hashtag_bar.set_tags(data.get("hashtags", []))
         self._on_caption_changed()
+
+        self.dt_picker.setEnabled(True)
+        self.lbl_sched_video.setText(f"Horário de: {Path(self._current_video).name}")
+        self.dt_picker.set_datetime(data.get("schedule"))
+        self._update_sched_info()
+
+    def _on_schedule_edited(self):
+        if self._current_video and self._current_video in self._video_metadata:
+            self._video_metadata[self._current_video]["schedule"] = self.dt_picker.selected_datetime()
+            self._refresh_item(self._current_video)
+            self._update_sched_info()
+
+    def _update_sched_info(self):
+        pending = [d for d in self._video_metadata.values() if d.get("status") != "ok"]
+        with_time = sum(1 for d in pending if d.get("schedule"))
+        self.lbl_sched_info.setText(f"{with_time} de {len(pending)} vídeo(s) com horário")
+
+    def _open_daily_pattern(self):
+        targets = [f for f in self.get_selected_files()
+                   if self._video_metadata[f].get("status") != "ok"]
+        if not targets:
+            QMessageBox.warning(self, "Aviso", "Adicione vídeos na lista primeiro.")
+            return
+        dlg = DailyPatternDialog(self.dt_picker.shortcut_times(), len(targets), self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        times = dlg.result_times()
+        slots = build_daily_schedule(len(targets), times, dlg.start_date())
+        if not slots:
+            return
+        self.dt_picker.set_shortcut_times(times)
+        for path, dt in zip(targets, slots):
+            self._video_metadata[path]["schedule"] = dt
+            self._refresh_item(path)
+        self._update_meta_fields()
+        self.lbl_progress.setText(
+            f"📆 {len(slots)} vídeo(s) programados de {slots[0]:%d/%m %H:%M} até {slots[-1]:%d/%m %H:%M}."
+        )
 
     def _on_meta_edited(self):
         if self._current_video and self._current_video in self._video_metadata:
-            self._video_metadata[self._current_video]["caption"] = self.txt_caption.toPlainText()
+            data = self._video_metadata[self._current_video]
+            data["caption"] = self.txt_caption.toPlainText()
+            data["hashtags"] = self.hashtag_bar.get_tags()
+            self._refresh_item(self._current_video)
+
+    def _apply_tags_to_all(self):
+        if not self._current_video:
+            QMessageBox.warning(self, "Aviso", "Selecione um vídeo na lista primeiro.")
+            return
+        tags = self.hashtag_bar.get_tags()
+        for path, data in self._video_metadata.items():
+            data["hashtags"] = list(tags)
+            self._refresh_item(path)
+        self.lbl_progress.setText(f"# Hashtags aplicadas a {len(self._video_metadata)} vídeo(s).")
 
     def _change_api_key(self):
         from config.settings import settings
         current_key = getattr(settings, 'gemini_api_key', '')
+        # Não pré-preenche a chave: só mostra os 4 últimos caracteres
+        hint = f"Chave atual: ••••{current_key[-4:]}\n" if current_key else "Nenhuma chave salva.\n"
         api_key, ok = QInputDialog.getText(
             self, "Alterar API Key do Gemini",
-            "Insira sua nova chave de API do Google Gemini:\n(Se for inválida ou vazia, pediremos novamente no uso)",
+            hint + "Insira sua nova chave de API do Google Gemini:\n(Se for inválida ou vazia, pediremos novamente no uso)",
             QLineEdit.EchoMode.Password,
-            text=current_key
         )
         if ok:
             settings.gemini_api_key = api_key.strip()
             settings.save_config()
             QMessageBox.information(self, "Sucesso", "API Key salva com sucesso!")
 
+    def _ensure_api_key(self) -> str | None:
+        """Retorna a API key do Gemini, pedindo ao usuário se ainda não houver."""
+        from config.settings import settings
+
+        if getattr(settings, 'gemini_api_key', ''):
+            return settings.gemini_api_key
+        api_key, ok = QInputDialog.getText(
+            self, "API Key do Gemini",
+            "Para usar a IA, insira sua chave de API grátis do Google Gemini:\n(Ela será salva localmente)",
+            QLineEdit.EchoMode.Password
+        )
+        if ok and api_key.strip():
+            settings.gemini_api_key = api_key.strip()
+            settings.save_config()
+            return settings.gemini_api_key
+        return None
+
+    def _ai_busy(self) -> bool:
+        return self._ai_thread is not None and self._ai_thread.isRunning()
+
     def _generate_ai_desc(self):
         if not self._current_video:
             QMessageBox.warning(self, "Aviso", "Selecione um vídeo na lista primeiro.")
             return
-
-        from config.settings import settings
-
-        if not hasattr(settings, 'gemini_api_key') or not settings.gemini_api_key:
-            api_key, ok = QInputDialog.getText(
-                self, "API Key do Gemini",
-                "Para usar a IA, insira sua chave de API grátis do Google Gemini:\n(Ela será salva localmente)",
-                QLineEdit.EchoMode.Password
-            )
-            if ok and api_key.strip():
-                settings.gemini_api_key = api_key.strip()
-                settings.save_config()
-            else:
-                return
+        if self._ai_busy():
+            return
+        api_key = self._ensure_api_key()
+        if not api_key:
+            return
 
         context, ok = QInputDialog.getText(
             self, "Contexto do Vídeo (IA)",
@@ -1518,31 +1880,75 @@ class UploadWidget(QWidget):
         )
         if not ok or not context.strip():
             return
+        self._start_ai(api_key, [(self._current_video, context.strip())])
 
-        self.btn_ai_desc.setEnabled(False)
-        self.btn_ai_desc.setText("⏳ Gerando...")
-
-        lang = self.combo_ai_lang.currentText()
-        self._ai_thread = AIGeneratorThread(settings.gemini_api_key, context.strip(), language=lang)
-        self._ai_thread.finished.connect(self._on_ai_desc_ready)
-        self._ai_thread.start()
-
-    def _on_ai_desc_ready(self, success, text, tags):
-        self.btn_ai_desc.setEnabled(True)
-        self.btn_ai_desc.setText("✨ Criar com IA")
-        
-        if not success:
-            QMessageBox.critical(self, "Erro", f"Tivemos um problema com a resposta do Gemini:\n{text}")
+    def _generate_ai_all(self):
+        paths = self.get_selected_files()
+        if not paths:
+            QMessageBox.warning(self, "Aviso", "Adicione vídeos na lista primeiro.")
+            return
+        if self._ai_busy():
+            return
+        api_key = self._ensure_api_key()
+        if not api_key:
             return
 
-        self.txt_caption.setPlainText(text)
-        
-        if tags:
-            self.hashtag_bar.clear()
-            for t in tags:
-                if not t.startswith("#"):
-                    t = "#" + t
-                self.hashtag_bar._add_tag(t)
+        context, ok = QInputDialog.getText(
+            self, "Contexto dos Vídeos (IA)",
+            f"Vai gerar descrição + hashtags para {len(paths)} vídeo(s).\n"
+            "Contexto geral (opcional — o nome de cada arquivo também é usado):",
+        )
+        if not ok:
+            return
+        general = context.strip()
+        items = []
+        for path in paths:
+            name = re.sub(r"[_\-.]+", " ", Path(path).stem).strip()
+            ctx = f"Título/arquivo do vídeo: {name}"
+            items.append((path, f"{general}. {ctx}" if general else ctx))
+        self._start_ai(api_key, items)
+
+    def _start_ai(self, api_key: str, items: list[tuple[str, str]]):
+        self.btn_ai_desc.setEnabled(False)
+        self.btn_ai_all.setEnabled(False)
+        self.btn_ai_desc.setText("⏳ Gerando...")
+        self._ai_errors: list[str] = []
+
+        lang = self.combo_ai_lang.currentText()
+        self._ai_thread = AIGeneratorThread(api_key, items, language=lang)
+        self._ai_thread.item_done.connect(self._on_ai_item_done)
+        self._ai_thread.item_failed.connect(self._on_ai_item_failed)
+        self._ai_thread.progress.connect(
+            lambda done, total: self.lbl_progress.setText(f"✨ IA: {done}/{total} vídeo(s) processado(s)…")
+        )
+        self._ai_thread.finished.connect(self._on_ai_finished)
+        self._ai_thread.start()
+
+    def _on_ai_item_done(self, path: str, text: str, tags: list):
+        data = self._video_metadata.get(path)
+        if data is None:  # removido da lista enquanto a IA rodava
+            return
+        data["caption"] = text
+        data["hashtags"] = [str(t).strip().lstrip("#") for t in tags if str(t).strip()]
+        self._refresh_item(path)
+        if path == self._current_video:
+            self._update_meta_fields()
+
+    def _on_ai_item_failed(self, path: str, msg: str):
+        self._ai_errors.append(f"{Path(path).name}: {msg}")
+
+    def _on_ai_finished(self):
+        self.btn_ai_desc.setEnabled(True)
+        self.btn_ai_all.setEnabled(True)
+        self.btn_ai_desc.setText("✨ Criar com IA")
+        if self._ai_errors:
+            QMessageBox.critical(
+                self, "Erro",
+                "Tivemos um problema com a resposta do Gemini:\n\n" + "\n\n".join(self._ai_errors[:5]),
+            )
+            self.lbl_progress.setText(f"⚠️ IA terminou com {len(self._ai_errors)} erro(s).")
+        else:
+            self.lbl_progress.setText("✨ Descrições e hashtags geradas!")
 
     # ------------------------------------------------------------------
     # Caption char counter
@@ -1646,17 +2052,12 @@ class UploadWidget(QWidget):
         filenames, _ = QFileDialog.getOpenFileNames(
             self, "Selecionar Vídeos", "", "Video Files (*.mp4 *.mov *.avi *.mkv)"
         )
-        if filenames:
-            for f in filenames:
-                if f not in self._video_metadata:
-                    self._video_metadata[f] = {"caption": ""}
-            self.file_list.addItems(filenames)
+        for f in filenames:
+            self._add_video(f)
 
     def _remove_selected_files(self):
         for item in self.file_list.selectedItems():
-            text = item.text()
-            if text in self._video_metadata:
-                del self._video_metadata[text]
+            self._video_metadata.pop(self._item_path(item), None)
             self.file_list.takeItem(self.file_list.row(item))
         if self.file_list.count() == 0:
             self._current_video = None
@@ -1669,21 +2070,26 @@ class UploadWidget(QWidget):
         self._update_meta_fields()
 
     def get_selected_files(self) -> list[str]:
-        return [self.file_list.item(i).text() for i in range(self.file_list.count())]
+        return [self._item_path(self.file_list.item(i)) for i in range(self.file_list.count())]
 
     # ------------------------------------------------------------------
     # Action dispatcher
     # ------------------------------------------------------------------
 
     def _handle_action(self):
+        if self.upload_thread is not None and self.upload_thread.isRunning():
+            return
+
         account_name = self._selected_account_name()
         if not account_name:
             QMessageBox.warning(self, "Erro", "Adicione e selecione uma conta antes de enviar!")
             return
 
-        files = self.get_selected_files()
+        # Já enviados com sucesso ficam de fora (evita postar duplicado ao reenviar falhas)
+        files = [f for f in self.get_selected_files()
+                 if self._video_metadata[f].get("status") != "ok"]
         if not files:
-            QMessageBox.warning(self, "Erro", "Selecione pelo menos um arquivo de vídeo!")
+            QMessageBox.warning(self, "Erro", "Adicione pelo menos um vídeo que ainda não foi enviado!")
             return
 
         for video in files:
@@ -1691,55 +2097,55 @@ class UploadWidget(QWidget):
                 QMessageBox.warning(self, "Erro", f"Arquivo de vídeo não encontrado: {video}")
                 return
 
-        hashtags = self.hashtag_bar.get_tags()
         browser = self.combo_browser.currentText()
-
-        if self.radio_now.isChecked():
-            self._start_batch_upload(account_name, files, hashtags, browser, scheduled=False)
-        else:
-            self._start_batch_upload(account_name, files, hashtags, browser, scheduled=True)
+        self._start_batch_upload(account_name, files, browser, scheduled=self.radio_later.isChecked())
 
     # ------------------------------------------------------------------
     # Batch Upload
     # ------------------------------------------------------------------
 
-    def _start_batch_upload(self, account_name, files, hashtags, browser, scheduled=False):
-        tasks = []
-        
+    def _start_batch_upload(self, account_name, files, browser, scheduled=False):
         if scheduled:
-            base_dt = self.dt_picker.selected_datetime()
-            interval_min = self.spin_interval.value()
-
-            # TikTok requirement validation for the very first video
-            delta_s = (base_dt - datetime.now()).total_seconds()
-            if delta_s < 15 * 60:
+            now = datetime.now()
+            sem_horario = [f for f in files if not self._video_metadata[f].get("schedule")]
+            if sem_horario:
                 QMessageBox.warning(
-                    self,
-                    "Aviso",
-                    "O TikTok exige que o agendamento seja pelo menos 15 minutos no futuro!",
+                    self, "Aviso",
+                    f"{len(sem_horario)} vídeo(s) sem horário. Selecione cada um e defina o horário, "
+                    "ou use o botão 'Padrão diário'.",
+                )
+                return
+            fora = [
+                f"• {Path(f).name} — {self._video_metadata[f]['schedule']:%d/%m %H:%M}"
+                for f in files
+                if not (SCHEDULE_MIN_LEAD
+                        <= self._video_metadata[f]["schedule"] - now
+                        <= SCHEDULE_MAX_AHEAD)
+            ]
+            if fora:
+                QMessageBox.warning(
+                    self, "Aviso",
+                    "O TikTok só aceita agendamentos entre 20 minutos e 10 dias à frente. "
+                    "Ajuste estes vídeos:\n" + "\n".join(fora[:15]),
                 )
                 return
 
-        for i, video in enumerate(files):
-            data = self._video_metadata.get(video, {"caption": ""})
-            caption = data.get("caption", "").strip()
-
-            task = {
+        tasks = []
+        for video in files:
+            data = self._video_metadata[video]
+            tasks.append({
                 "path": video,
-                "title": caption,
-                "hashtags": hashtags,
-            }
-            if scheduled:
-                # Add interval for each subsequent video
-                dt = base_dt + timedelta(minutes=interval_min * i)
-                # tiktok_uploader expects 'YYYY-MM-DD HH:MM:SS' string format
-                task["schedule_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
-                task["_raw_dt"] = dt  # to populate local queue tracking
-            else:
-                task["schedule_time"] = None
-                
-            tasks.append(task)
+                "title": data["caption"].strip(),
+                "hashtags": list(data["hashtags"]),
+                "schedule_time": data["schedule"] if scheduled else None,
+            })
+        # Mais cedo primeiro: o TikTok Studio fica na ordem de publicação
+        if scheduled:
+            tasks.sort(key=lambda t: t["schedule_time"])
 
+        self._pending_tasks = tasks
+        self._pending_account = account_name
+        self._pending_browser = browser
         self.btn_upload.setEnabled(False)
         self.lbl_progress.setText(f"🚀 Iniciando upload de {len(tasks)} vídeo(s) com conta '{account_name}'…")
 
@@ -1750,26 +2156,43 @@ class UploadWidget(QWidget):
             headless=True,
         )
         self.upload_thread.progress.connect(self.lbl_progress.setText)
-        self.upload_thread.finished.connect(self._upload_done)
+        self.upload_thread.done.connect(self._upload_done)
         self.upload_thread.start()
 
-        if scheduled:
-            # Add to local queue display
-            for t in tasks:
+    def _upload_done(self, failed: list):
+        self.btn_upload.setEnabled(True)
+        failed_set = set(failed)
+        tasks = self._pending_tasks
+        for t in tasks:
+            path = t["path"]
+            if path in self._video_metadata:
+                self._video_metadata[path]["status"] = "fail" if path in failed_set else "ok"
+                self._refresh_item(path)
+
+        self._update_sched_info()
+        ok_tasks = [t for t in tasks if t["path"] not in failed_set]
+        for t in ok_tasks:
+            if t["schedule_time"]:
                 timer = QTimer(self)
                 timer.setSingleShot(True)
-                post = ScheduledPost(account_name, t["path"], t["title"], hashtags, browser, t["_raw_dt"], timer)
-                self._scheduled_posts.append(post)
-            self._refresh_queue_ui()
+                self._scheduled_posts.append(ScheduledPost(
+                    self._pending_account, t["path"], t["title"], t["hashtags"],
+                    self._pending_browser, t["schedule_time"], timer,
+                ))
+        self._refresh_queue_ui()
 
-    def _upload_done(self, success: bool, msg: str):
-        self.btn_upload.setEnabled(True)
-        if success:
-            QMessageBox.information(self, "Sucesso", msg)
+        if not failed_set:
+            QMessageBox.information(self, "Sucesso", f"{len(tasks)} vídeo(s) enviado(s) com sucesso!")
             self.lbl_progress.setText("✅ Processo concluído!")
         else:
-            QMessageBox.critical(self, "Erro", msg)
-            self.lbl_progress.setText("❌ Falha no processo")
+            names = "\n".join(f"• {Path(p).name}" for p in failed)
+            QMessageBox.critical(
+                self, "Erro",
+                f"{len(failed_set)} de {len(tasks)} vídeo(s) falharam:\n{names}\n\n"
+                "Verifique os cookies da conta e clique em Enviar de novo — "
+                "só os que falharam serão reenviados.",
+            )
+            self.lbl_progress.setText(f"⚠️ {len(ok_tasks)} enviado(s), {len(failed_set)} com falha (❌)")
 
     # ------------------------------------------------------------------
     # Queue display helpers
@@ -1817,6 +2240,4 @@ class UploadWidget(QWidget):
 
     def set_file(self, path: str):
         """Adiciona um arquivo programaticamente (chamado após o processamento)."""
-        if path not in self._video_metadata:
-            self._video_metadata[path] = {"caption": ""}
-        self.file_list.addItem(str(path))
+        self._add_video(str(path))

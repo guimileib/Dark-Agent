@@ -20,6 +20,55 @@ try:
 except ImportError:
     pass
 
+_SECRET_PREFIX = "dpapi:"
+
+
+def _dpapi(data: bytes, encrypt: bool) -> bytes:
+    """Cifra/decifra com o DPAPI do Windows (atrelado ao usuário logado)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buf = ctypes.create_string_buffer(data, len(data))
+    blob_in = _Blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    blob_out = _Blob()
+    fn = ctypes.windll.crypt32.CryptProtectData if encrypt else ctypes.windll.crypt32.CryptUnprotectData
+    if not fn(ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)):
+        raise OSError("DPAPI falhou")
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+
+
+def _encrypt_secret(value: str) -> str:
+    """Cifra a string para gravar no config. Fora do Windows grava como veio."""
+    import base64
+
+    if not value or os.name != "nt":
+        return value
+    try:
+        return _SECRET_PREFIX + base64.b64encode(_dpapi(value.encode("utf-8"), True)).decode("ascii")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Não foi possível cifrar a API key: {e}")
+        return value
+
+
+def _decrypt_secret(value: str) -> str:
+    """Decifra um valor salvo por _encrypt_secret; texto puro (legado) passa direto."""
+    import base64
+
+    if not value.startswith(_SECRET_PREFIX):
+        return value
+    try:
+        return _dpapi(base64.b64decode(value[len(_SECRET_PREFIX):]), False).decode("utf-8")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Não foi possível decifrar a API key: {e}")
+        return ""
+
+
 try:
     from models import EstiloLegenda
 except ImportError:
@@ -107,7 +156,11 @@ class Settings:
                     self.last_open_dir = data.get("last_open_dir", str(Path.home()))
                     # API key: env wins (do .env ou shell). Fallback: config.json.
                     env_key = os.environ.get("GEMINI_API_KEY", "").strip()
-                    self.gemini_api_key = env_key or data.get("gemini_api_key", "")
+                    stored = data.get("gemini_api_key", "")
+                    self.gemini_api_key = env_key or _decrypt_secret(stored)
+                # Migra chave legada em texto puro para a versão cifrada
+                if stored and not env_key and not stored.startswith(_SECRET_PREFIX):
+                    self.save_config()
             except Exception as e:
                 print(f"Erro ao carregar config: {e}")
                 self.last_open_dir = str(Path.home())
@@ -129,7 +182,7 @@ class Settings:
             "audio_passthrough": self.audio_passthrough,
             "ytdlp_concurrent_fragments": self.ytdlp_concurrent_fragments,
             "last_open_dir": self.last_open_dir,
-            "gemini_api_key": self.gemini_api_key
+            "gemini_api_key": _encrypt_secret(self.gemini_api_key)
         }
         try:
             config_file.parent.mkdir(parents=True, exist_ok=True)
