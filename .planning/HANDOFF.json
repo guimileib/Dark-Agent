@@ -1,48 +1,39 @@
 {
   "version": "1.0",
-  "timestamp": "2026-10-08T18:46:59Z",
+  "timestamp": "2026-10-19T21:08:24Z",
   "phase": null,
-  "phase_name": "default (sem fase GSD) — distribuição/CI + padronização de docs",
+  "phase_name": "default (sem fase GSD) — postagem em lote no TikTok (legendas IA, agendamento, uploader)",
   "phase_dir": ".planning",
   "plan": null,
-  "task": 6,
-  "total_tasks": 7,
+  "task": 7,
+  "total_tasks": 8,
   "status": "paused",
   "completed_tasks": [
-    {"id": 1, "name": "Instância única (utils/single_instance.py) + aviso 'já está aberto'", "status": "done", "commit": "e829d09"},
-    {"id": 2, "name": "yt-dlp no .exe (desvio no topo do launcher.py + collect_all no .spec)", "status": "done", "commit": "e829d09"},
-    {"id": 3, "name": "src/models/ versionado (.gitignore ancorado) + ci.yml substitui release.yml", "status": "done", "commit": "e829d09"},
-    {"id": 4, "name": "Deps do uploader declaradas, tiktok-uploader==1.1.5", "status": "done", "commit": "da27fd8"},
-    {"id": 5, "name": "Release v2.0.3 publicada pelo CI (asset DarkAgentLauncher.exe 411 MB)", "status": "done", "commit": "e3b2543"},
-    {"id": 6, "name": "Docstrings ≤3 linhas em PT-BR + regra no check_structure + README.md/README.en.md", "status": "in_progress", "progress": "Tudo feito e validado localmente (check OK, 15 testes OK); falta commit/push — aguardando OK do usuário"}
+    {"id": 1, "name": "Uma janela só: versão do Chrome/Brave lida das pastas (sem `exe --version`), ChromeOptions novas no retry, fecha abas extras", "status": "done", "commit": "bd5b9d2"},
+    {"id": 2, "name": "UI de postagem: legenda + hashtags por vídeo, 'IA p/ todos', 'Aplicar a todos', status por vídeo (🚀/❌), reenvio só dos que falharam", "status": "done", "commit": "bd5b9d2"},
+    {"id": 3, "name": "Gemini: 1 request p/ N vídeos (JSON schema + dataclass CaptionResult, lotes de 20); modelo gemini-3.8-flash com fallback gemini-flash-latest; API key cifrada com DPAPI e mascarada", "status": "done", "commit": "bd5b9d2"},
+    {"id": 4, "name": "Agendamento por vídeo + 'Padrão diário' (build_daily_schedule: N horários/dia, pula < 20 min, limite 10 dias)", "status": "done", "commit": "bd5b9d2"},
+    {"id": 5, "name": "Uploader: fluxo próprio do TikTok Studio (substitui complete_upload_form da tiktok-uploader 1.1.5) — upload, descrição c/ hashtags escolhidas na sugestão, data/hora, post, dump HTML+PNG em logs/tiktok_debug/", "status": "done", "commit": "bd5b9d2 (parcial) + não commitado"},
+    {"id": 6, "name": "Robustez: hora só grava ao fechar o relógio, descrição re-digitada se o prefill sobrescrever (3x), navegador novo a cada 8 vídeos", "status": "done", "commit": "não commitado (src/core/uploader.py)"},
+    {"id": 7, "name": "Edge/Firefox via Selenium Manager (webdriver_manager usa msedgedriver.azureedge.net, fora do ar) + lote para cedo se o navegador não abrir", "status": "in_progress", "progress": "Código feito; Edge 155 abriu headless pelo Selenium Manager; falta o usuário reenviar os 36 vídeos e validar no TikTok real"}
   ],
   "remaining_tasks": [
-    {"id": 6, "name": "Commit + push das docstrings/READMEs no dev (só se o usuário pedir)", "status": "not_started"},
-    {"id": 7, "name": "Remover comentários do .env.example", "status": "not_started"}
+    {"id": 7, "name": "Usuário reenvia os 36 vídeos que falharam (Butt Out_03+ e Raisins_*) — conferir log e TikTok Studio → Publicações", "status": "not_started"},
+    {"id": 8, "name": "Commit + push das mudanças em src/core/uploader.py (só se o usuário pedir)", "status": "not_started"}
   ],
-  "blockers": [
-    {"description": "Arquivos .env* são negados pelas permissões do Claude Code (Read/Bash)", "type": "human_action", "workaround": "Usuário libera .env.example nas permissões ou cola o conteúdo via `! cat .env.example`. Nunca ler o .env real (tem chaves)."}
-  ],
+  "blockers": [],
   "async_jobs": [],
   "human_actions_pending": [
-    {"action": "Decidir se faz commit/push das docstrings + READMEs", "context": "Usuário não pediu commit nesta rodada", "blocking": true},
-    {"action": "Liberar acesso ao .env.example (ou colar o conteúdo)", "context": "Necessário para a tarefa 7", "blocking": true}
+    {"action": "Reabrir o app e reenviar os 36 vídeos programados (Chrome ou Edge), sem os 10 já agendados", "context": "Validação real das correções de hora/descrição/sessões/Edge — só testado com HTML simulado", "blocking": true},
+    {"action": "Decidir commit/push de src/core/uploader.py (staged + unstaged)", "context": "Usuário não pediu commit; bd5b9d2 foi commit dele", "blocking": false}
   ],
   "decisions": [
-    {"decision": "Push na main com __version__ sem tag publica Release automaticamente (ci.yml)", "rationale": "Usuário quer 'subir na main = update ao abrir o app'", "phase": null},
-    {"decision": "v2.0.2 abandonada (tag órfã sem Release); correção saiu como v2.0.3", "rationale": "Mover tag remota foi bloqueado como destrutivo; usuário escolheu bump", "phase": null},
-    {"decision": "Docstrings: PT-BR, ≤3 linhas, sem blocos Args/Returns; enforced no CI", "rationale": "Pedido do usuário: padrão com poucas linhas", "phase": null},
-    {"decision": "Removidos do README a tabela de performance e a linha 'MIT License'", "rationale": "Tempos não medidos; arquivo LICENSE não existe", "phase": null}
+    {"decision": "Nunca publicar com horário diferente do pedido: _schedule_matches confere 'Programar' marcado + valores exatos dos inputs; senão levanta e não clica Agendar", "rationale": "Falha segura — melhor não postar que postar na hora errada", "phase": null},
+    {"decision": "Manter tiktok-uploader==1.1.5 só pelo loop upload_videos (isola falha por vídeo); todo o fluxo por vídeo é nosso", "rationale": "Seletores da lib morreram (#tux-1, 'Post now', div.button-wrapper) e _set_video+threading.Event trava para sempre em erro", "phase": null},
+    {"decision": "Hashtag só vira link se houver sugestão com texto exatamente igual; senão fica texto", "rationale": "Evita trocar #fyp por #fypシ", "phase": null},
+    {"decision": "Agendamento usa o agendador do TikTok (PC pode desligar); fila local é só display", "rationale": "Botão renomeado para 'Remover da lista' — não cancela no TikTok", "phase": null}
   ],
-  "uncommitted_files": [
-    "README.md", "README.en.md", "scripts/check_structure.py",
-    "src/config/paths.py", "src/core/clip_analyzer.py", "src/core/compilation.py", "src/core/downloader.py",
-    "src/core/encoder.py", "src/core/overlay_renderer.py", "src/core/preview_renderer.py", "src/core/social_manager.py",
-    "src/core/subtitle_generator.py", "src/core/transcriber.py", "src/core/uploader.py", "src/core/validator.py",
-    "src/core/video_editor.py", "src/launcher.py", "src/models/overlay.py", "src/torch_fix.py", "src/ui/main_window.py",
-    "src/ui/widgets/compilation_widget.py", "src/ui/widgets/editor_widget.py", "src/ui/widgets/upload_widget.py",
-    "src/utils/single_instance.py"
-  ],
-  "next_action": "Perguntar ao usuário se pode commitar/pushar as docstrings + READMEs no dev; depois resolver o .env.example",
-  "context_notes": "Sem fase GSD. Trabalho em dev; main está em e3b2543 (v2.0.3 publicada). Commits só quando o usuário pedir. Usuário prefere PT-BR conciso."
+  "uncommitted_files": ["src/core/uploader.py"],
+  "next_action": "Pedir ao usuário o resultado do reenvio dos 36 vídeos; ler logs/darkagent.log a partir do último 'Starting batch upload' (contar 'Schedule set and verified' vs 'Falha em') e os dumps mais novos em logs/tiktok_debug/",
+  "context_notes": "Já agendados (NÃO reenviar): All About Mormons_final_clip_14..21 (19/10 15h–23h, 20/10 15h–19h) e Butt Out_final_clip_01/02 (20/10 21h/23h). Testes de regressão ficam no scratchpad da sessão anterior (smoke_*.py, venv com tiktok-uploader 1.1.5) — não estão no repo. Python global do usuário tem tiktok-uploader 1.2.0 (Playwright) e sem selenium; o venv do projeto (G:\\DarkAgent\\venv) tem selenium 4.40 + 1.1.5."
 }
