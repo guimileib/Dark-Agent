@@ -10,9 +10,11 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PyQt6.QtCore import (
-    Qt, QDate, QThread, QTimer, pyqtSignal, QSize,
+    Qt, QDate, QLocale, QPoint, QRect, QThread, QTimer, pyqtSignal, QSize,
 )
-from PyQt6.QtGui import QBrush, QColor, QFont, QTextCharFormat, QWheelEvent
+from PyQt6.QtGui import (
+    QBrush, QColor, QFont, QIcon, QPainter, QPen, QTextCharFormat, QWheelEvent,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCalendarWidget, QComboBox,
     QDialog, QDialogButtonBox,
@@ -330,6 +332,187 @@ class DrumRoll(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Calendário escuro + botão de data com popup
+# ---------------------------------------------------------------------------
+
+_WEEKDAYS_PT = ("seg", "ter", "qua", "qui", "sex", "sáb", "dom")
+_MONTHS_PT = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+_MONTHS_PT_FULL = (
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+)
+
+
+def format_date_pt(d: date) -> str:
+    """Data curta em PT ("qui, 29 de out")."""
+    return f"{_WEEKDAYS_PT[d.weekday()]}, {d.day} de {_MONTHS_PT[d.month - 1]}"
+
+
+class DarkCalendar(QCalendarWidget):
+    """Calendário escuro no estilo do TikTok Studio: dia escolhido em círculo, fora do range apagado."""
+
+    _ACCENT = QColor("#EC4899")
+    _TODAY = QColor("#3B82F6")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setGridVisible(False)
+        self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self.setHorizontalHeaderFormat(QCalendarWidget.HorizontalHeaderFormat.ShortDayNames)
+        self.setFirstDayOfWeek(Qt.DayOfWeek.Sunday)
+        self.setLocale(QLocale(QLocale.Language.Portuguese, QLocale.Country.Brazil))
+        self.setFixedSize(300, 290)
+
+        header_fmt = QTextCharFormat()
+        header_fmt.setForeground(QBrush(QColor("#64748B")))
+        header_fmt.setFontWeight(QFont.Weight.DemiBold)
+        self.setHeaderTextFormat(header_fmt)
+        for day in Qt.DayOfWeek:
+            self.setWeekdayTextFormat(day, QTextCharFormat())
+
+        # Setas de mês como texto (os ícones nativos somem no tema escuro)
+        for name, glyph in (("qt_calendar_prevmonth", "‹"), ("qt_calendar_nextmonth", "›")):
+            btn = self.findChild(QToolButton, name)
+            if btn is not None:
+                btn.setIcon(QIcon())
+                btn.setText(glyph)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        for name in ("qt_calendar_monthbutton", "qt_calendar_yearbutton"):
+            btn = self.findChild(QToolButton, name)
+            if btn is not None:
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("""
+            QCalendarWidget QWidget { background-color: #0F172A; color: #E2E8F0;
+                alternate-background-color: #0F172A; }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: #0F172A; border: none; padding: 4px 4px 2px 4px; min-height: 38px; }
+            QCalendarWidget QToolButton { color: #F0F4FF; background: transparent; border: none;
+                font-size: 14px; font-weight: 700; padding: 4px 8px; border-radius: 8px; }
+            QCalendarWidget QToolButton:hover { background: #1E293B; }
+            QCalendarWidget QToolButton#qt_calendar_prevmonth,
+            QCalendarWidget QToolButton#qt_calendar_nextmonth {
+                font-size: 22px; font-weight: 400; min-width: 30px; max-width: 30px; padding: 0 0 3px 0; }
+            QCalendarWidget QToolButton::menu-indicator { image: none; width: 0; }
+            QCalendarWidget QMenu { background: #1E293B; color: #E2E8F0; border: 1px solid #334155; }
+            QCalendarWidget QMenu::item:selected { background: #3B82F6; }
+            QCalendarWidget QSpinBox { background: #1E293B; color: #E2E8F0; border: 1px solid #334155;
+                border-radius: 6px; padding: 2px 6px; selection-background-color: #3B82F6; }
+            QCalendarWidget QAbstractItemView { background-color: #0F172A; outline: 0; border: none;
+                font-size: 13px; selection-background-color: transparent; }
+        """)
+
+    def paintCell(self, painter: QPainter, rect: QRect, qdate: QDate) -> None:
+        shown = qdate.month() == self.monthShown() and qdate.year() == self.yearShown()
+        if not shown:
+            return  # só os dias do mês exibido, como no TikTok
+        enabled = self.minimumDate() <= qdate <= self.maximumDate()
+        selected = qdate == self.selectedDate()
+        today = qdate == QDate.currentDate()
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        side = min(rect.width(), rect.height()) - 6
+        circle = QRect(0, 0, side, side)
+        circle.moveCenter(rect.center())
+        if selected:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._ACCENT)
+            painter.drawEllipse(circle)
+        elif today:
+            painter.setPen(QPen(self._TODAY, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(circle)
+
+        font = painter.font()
+        font.setBold(selected or today)
+        painter.setFont(font)
+        if selected:
+            color = QColor("#FFFFFF")
+        elif enabled:
+            color = QColor("#F0F4FF")
+        else:
+            color = QColor("#334155")
+        painter.setPen(color)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(qdate.day()))
+        painter.restore()
+
+
+class DatePickerButton(QPushButton):
+    """Botão que mostra a data e abre um DarkCalendar com atalhos (Hoje/Amanhã/+7 dias)."""
+    dateChanged = pyqtSignal(QDate)
+
+    def __init__(self, initial: QDate | None = None, parent=None):
+        super().__init__(parent)
+        self._date = initial or QDate.currentDate()
+        self._min = QDate.currentDate()
+        self._max = QDate(7999, 12, 31)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clicked.connect(self._open_popup)
+        self._refresh_text()
+
+    def date(self) -> QDate:
+        return self._date
+
+    def setDate(self, qdate: QDate) -> None:
+        if qdate == self._date:
+            return
+        self._date = qdate
+        self._refresh_text()
+        self.dateChanged.emit(qdate)
+
+    def setDateRange(self, minimum: QDate, maximum: QDate) -> None:
+        self._min, self._max = minimum, maximum
+
+    def _refresh_text(self) -> None:
+        self.setText(f"{format_date_pt(self._date.toPyDate())}  ▾")
+
+    def _open_popup(self) -> None:
+        popup = QFrame(self, Qt.WindowType.Popup)
+        popup.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        popup.setStyleSheet("""
+            QFrame#calPopup { background: #0F172A; border: 1px solid #1F2D3D; border-radius: 14px; }
+            QPushButton { background: #1E293B; color: #CBD5E1; border: 1px solid #334155;
+                border-radius: 13px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
+            QPushButton:hover { background: rgba(236,72,153,0.18); color: #FFFFFF;
+                border-color: #EC4899; }
+        """)
+        popup.setObjectName("calPopup")
+        lay = QVBoxLayout(popup)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
+
+        cal = DarkCalendar(popup)
+        cal.setDateRange(self._min, self._max)
+        cal.setSelectedDate(self._date)
+        lay.addWidget(cal)
+
+        def pick(qdate: QDate) -> None:
+            self.setDate(qdate)
+            popup.close()
+
+        cal.clicked.connect(pick)
+        cal.activated.connect(pick)
+
+        quick = QHBoxLayout()
+        quick.setSpacing(6)
+        today = QDate.currentDate()
+        for label, days in (("Hoje", 0), ("Amanhã", 1), ("+7 dias", 7)):
+            target = today.addDays(days)
+            if not (self._min <= target <= self._max):
+                continue
+            btn = QPushButton(label)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, d=target: pick(d))
+            quick.addWidget(btn)
+        quick.addStretch()
+        lay.addLayout(quick)
+
+        popup.adjustSize()
+        popup.move(self.mapToGlobal(self.rect().bottomLeft()) + QPoint(0, 6))
+        popup.show()
+
+
+# ---------------------------------------------------------------------------
 # Compact inline date+time picker (like TikTok Studio)
 # ---------------------------------------------------------------------------
 
@@ -352,108 +535,60 @@ class InlineDateTimePicker(QWidget):
 
         # ── Row: time + date cards side by side ──────────────────────
         row = QHBoxLayout()
-        row.setSpacing(14)
+        row.setSpacing(12)
+
+        def card(caption: str, accent: str) -> tuple[QFrame, QVBoxLayout]:
+            frame = QFrame()
+            frame.setObjectName("dtCard")
+            frame.setMinimumWidth(190)
+            frame.setStyleSheet(f"""
+                QFrame#dtCard {{
+                    background: #0D1520; border: 1.5px solid #1F2D3D; border-radius: 14px;
+                }}
+                QFrame#dtCard:hover {{ border-color: {accent}; }}
+            """)
+            inner = QVBoxLayout(frame)
+            inner.setContentsMargins(16, 10, 12, 10)
+            inner.setSpacing(2)
+            lbl = QLabel(caption)
+            lbl.setStyleSheet(
+                f"color: {accent}; font-size: 10px; font-weight: 800;"
+                " letter-spacing: 1.5px; background: transparent; border: none;"
+            )
+            inner.addWidget(lbl)
+            return frame, inner
+
+        # ── Date card (abre o calendário) ────────────────────────────
+        date_frame, date_card = card("📅  DATA", "#EC4899")
+        self._date_edit = DatePickerButton(QDate(default.year, default.month, default.day))
+        self._date_edit.setToolTip("Clique para abrir o calendário")
+        self._date_edit.setStyleSheet("""
+            QPushButton {
+                background: transparent; border: none; color: #F0F4FF; text-align: left;
+                font-size: 20px; font-weight: 800; padding: 2px 0;
+            }
+            QPushButton:hover { color: #F9A8D4; }
+        """)
+        today = QDate.currentDate()
+        self._date_edit.setDateRange(today, today.addDays(SCHEDULE_MAX_AHEAD.days))
+        date_card.addWidget(self._date_edit)
+        row.addWidget(date_frame)
 
         # ── Time card ────────────────────────────────────────────────
-        time_frame = QFrame()
-        time_frame.setStyleSheet("""
-            QFrame {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(30, 41, 59, 0.9), stop:1 rgba(15, 23, 42, 0.9));
-                border: 1.5px solid rgba(59, 130, 246, 0.25);
-                border-radius: 14px;
-            }
-        """)
-        time_card = QVBoxLayout(time_frame)
-        time_card.setContentsMargins(16, 12, 16, 12)
-        time_card.setSpacing(6)
-
-        lbl_t = QLabel("HORA")
-        lbl_t.setStyleSheet(
-            "color: #60a5fa; font-size: 10px; font-weight: 800;"
-            " letter-spacing: 1.5px; background: transparent; border: none;"
-        )
-        time_card.addWidget(lbl_t)
-
+        time_frame, time_card = card("🕒  HORA", "#3B82F6")
         self._time_edit = QTimeEdit()
         self._time_edit.setTime(QTime(default.hour, default.minute))
         self._time_edit.setDisplayFormat("HH:mm")
+        self._time_edit.setButtonSymbols(QTimeEdit.ButtonSymbols.NoButtons)
+        self._time_edit.setToolTip("Digite ou role o mouse sobre a hora/minuto")
         self._time_edit.setStyleSheet("""
             QTimeEdit {
-                background: transparent; border: none; color: #f0f4ff;
-                font-size: 28px; font-weight: 800; font-family: 'Segoe UI', sans-serif;
-            }
-            QTimeEdit::up-button {
-                width: 22px; border-radius: 5px;
-                border: 1px solid rgba(59, 130, 246, 0.2);
-                background: rgba(30, 41, 59, 0.6); margin-bottom: 1px;
-            }
-            QTimeEdit::down-button {
-                width: 22px; border-radius: 5px;
-                border: 1px solid rgba(59, 130, 246, 0.2);
-                background: rgba(30, 41, 59, 0.6); margin-top: 1px;
-            }
-            QTimeEdit::up-button:hover, QTimeEdit::down-button:hover {
-                background: rgba(59, 130, 246, 0.4);
-                border-color: #3b82f6;
+                background: transparent; border: none; color: #F0F4FF; padding: 0;
+                font-size: 20px; font-weight: 800; selection-background-color: #3B82F6;
             }
         """)
         time_card.addWidget(self._time_edit)
         row.addWidget(time_frame)
-
-        # ── Date card ────────────────────────────────────────────────
-        date_frame = QFrame()
-        date_frame.setStyleSheet("""
-            QFrame {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(30, 41, 59, 0.9), stop:1 rgba(15, 23, 42, 0.9));
-                border: 1.5px solid rgba(139, 92, 246, 0.25);
-                border-radius: 14px;
-            }
-        """)
-        date_card = QVBoxLayout(date_frame)
-        date_card.setContentsMargins(16, 12, 16, 12)
-        date_card.setSpacing(6)
-
-        lbl_d = QLabel("DATA")
-        lbl_d.setStyleSheet(
-            "color: #a78bfa; font-size: 10px; font-weight: 800;"
-            " letter-spacing: 1.5px; background: transparent; border: none;"
-        )
-        date_card.addWidget(lbl_d)
-
-        self._date_edit = QDateEdit()
-        self._date_edit.setDate(QDate(default.year, default.month, default.day))
-        self._date_edit.setDisplayFormat("dd/MM/yyyy")
-        self._date_edit.setMinimumDate(QDate.currentDate())
-        self._date_edit.setCalendarPopup(True)
-        self._date_edit.setStyleSheet("""
-            QDateEdit {
-                background: transparent; border: none; color: #f0f4ff;
-                font-size: 22px; font-weight: 800; font-family: 'Segoe UI', sans-serif;
-            }
-            QDateEdit::up-button {
-                width: 20px; border-radius: 5px;
-                border: 1px solid rgba(139, 92, 246, 0.2);
-                background: rgba(30, 41, 59, 0.6);
-            }
-            QDateEdit::down-button {
-                width: 20px; border-radius: 5px;
-                border: 1px solid rgba(139, 92, 246, 0.2);
-                background: rgba(30, 41, 59, 0.6);
-            }
-            QDateEdit::up-button:hover, QDateEdit::down-button:hover {
-                background: rgba(139, 92, 246, 0.4);
-                border-color: #8b5cf6;
-            }
-            QDateEdit::drop-down {
-                subcontrol-origin: padding; subcontrol-position: right center;
-                width: 22px; border: none;
-            }
-        """)
-        self._style_calendar_popup(self._date_edit.calendarWidget())
-        date_card.addWidget(self._date_edit)
-        row.addWidget(date_frame)
         row.addStretch()
 
         layout.addLayout(row)
@@ -523,7 +658,7 @@ class InlineDateTimePicker(QWidget):
     def _update_summary(self):
         dt = self.selected_datetime()
         self._lbl_summary.setText(
-            f"Agendado para: {dt.strftime('%A, %d/%m/%Y')}  \u2022  {dt.strftime('%H:%M')}"
+            f"\u2713  Agendado para {format_date_pt(dt.date())} de {dt.year}  \u2022  {dt:%H:%M}"
         )
 
     def _set_favorite_time(self, time_str: str):
@@ -536,13 +671,13 @@ class InlineDateTimePicker(QWidget):
             background: rgba(30, 41, 59, 0.5);
             color: #94a3b8;
             border: 1px solid rgba(51, 65, 85, 0.5);
-            border-radius: 14px;
-            padding: 4px 12px;
+            border-radius: 12px;
+            padding: 0 14px; min-height: 26px;
             font-size: 12px;
             font-weight: 600;
         }
         QPushButton:hover {
-            background: rgba(59, 130, 246, 0.15);
+            background: rgba(59, 130, 246, 0.18);
             color: #e2e8f0;
             border-color: rgba(59, 130, 246, 0.4);
         }
@@ -557,8 +692,8 @@ class InlineDateTimePicker(QWidget):
             background: transparent;
             color: #64748b;
             border: 1px solid rgba(51, 65, 85, 0.5);
-            border-radius: 14px;
-            padding: 3px 10px;
+            border-radius: 12px;
+            padding: 0 10px; min-height: 26px;
             font-size: 13px;
         }
         QPushButton:hover {
@@ -604,100 +739,6 @@ class InlineDateTimePicker(QWidget):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._shortcut_times = dlg.result_times()
             self._build_favorites_row()
-
-    # ── Calendar popup styling ───────────────────────────────────────
-    def _style_calendar_popup(self, cal: QCalendarWidget) -> None:
-        """Tema escuro para o popup de calendário do QDateEdit."""
-        cal.setGridVisible(False)
-        cal.setVerticalHeaderFormat(
-            QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader
-        )
-        cal.setHorizontalHeaderFormat(
-            QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames
-        )
-        cal.setFirstDayOfWeek(Qt.DayOfWeek.Sunday)
-
-        weekday_fmt = QTextCharFormat()
-        weekday_fmt.setForeground(QBrush(QColor("#e2e8f0")))
-        weekend_fmt = QTextCharFormat()
-        weekend_fmt.setForeground(QBrush(QColor("#cbd5e1")))
-        for day in (
-            Qt.DayOfWeek.Monday, Qt.DayOfWeek.Tuesday, Qt.DayOfWeek.Wednesday,
-            Qt.DayOfWeek.Thursday, Qt.DayOfWeek.Friday,
-        ):
-            cal.setWeekdayTextFormat(day, weekday_fmt)
-        cal.setWeekdayTextFormat(Qt.DayOfWeek.Saturday, weekend_fmt)
-        cal.setWeekdayTextFormat(Qt.DayOfWeek.Sunday, weekend_fmt)
-
-        cal.setStyleSheet("""
-            QCalendarWidget QWidget {
-                background-color: #0f172a;
-                color: #e2e8f0;
-                alternate-background-color: #0f172a;
-            }
-            QCalendarWidget QAbstractItemView {
-                background-color: #0f172a;
-                color: #e2e8f0;
-                selection-background-color: #3b82f6;
-                selection-color: #ffffff;
-                outline: 0;
-                border: none;
-                font-size: 12px;
-                font-family: 'Segoe UI', sans-serif;
-            }
-            QCalendarWidget QAbstractItemView:enabled {
-                color: #e2e8f0;
-            }
-            QCalendarWidget QAbstractItemView:disabled {
-                color: #475569;
-            }
-            QCalendarWidget QWidget#qt_calendar_navigationbar {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1e293b, stop:1 #0f172a);
-                border-bottom: 1px solid rgba(59, 130, 246, 0.25);
-                min-height: 36px;
-            }
-            QCalendarWidget QToolButton {
-                color: #e2e8f0;
-                background: transparent;
-                border: none;
-                font-size: 13px;
-                font-weight: 700;
-                padding: 6px 10px;
-                border-radius: 6px;
-            }
-            QCalendarWidget QToolButton:hover {
-                background: rgba(59, 130, 246, 0.2);
-                color: #ffffff;
-            }
-            QCalendarWidget QToolButton::menu-indicator {
-                image: none;
-                width: 0;
-            }
-            QCalendarWidget QToolButton#qt_calendar_prevmonth,
-            QCalendarWidget QToolButton#qt_calendar_nextmonth {
-                qproperty-icon: none;
-                font-size: 16px;
-                padding: 0 8px;
-            }
-            QCalendarWidget QMenu {
-                background: #1e293b;
-                color: #e2e8f0;
-                border: 1px solid rgba(59, 130, 246, 0.3);
-            }
-            QCalendarWidget QSpinBox {
-                background: #1e293b;
-                color: #e2e8f0;
-                border: 1px solid rgba(59, 130, 246, 0.3);
-                border-radius: 4px;
-                padding: 2px 6px;
-                selection-background-color: #3b82f6;
-            }
-            QCalendarWidget QTableView {
-                selection-background-color: #3b82f6;
-                selection-color: #ffffff;
-            }
-        """)
 
     def selected_datetime(self) -> datetime:
         qd = self._date_edit.date()
@@ -831,13 +872,13 @@ class DailyPatternDialog(ShortcutsEditorDialog):
         outer = self.layout()
         top = QHBoxLayout()
         top.addWidget(QLabel("Começar em:"))
-        self._start = QDateEdit(QDate.currentDate())
-        self._start.setDisplayFormat("dd/MM/yyyy")
-        self._start.setMinimumDate(QDate.currentDate())
-        self._start.setCalendarPopup(True)
+        self._start = DatePickerButton(QDate.currentDate())
+        today = QDate.currentDate()
+        self._start.setDateRange(today, today.addDays(SCHEDULE_MAX_AHEAD.days))
         self._start.setStyleSheet(
-            "QDateEdit { background: #1e293b; color: #e2e8f0; border: 1px solid rgba(59,130,246,0.25);"
-            " border-radius: 6px; padding: 4px 8px; font-size: 13px; font-weight: 700; }"
+            "QPushButton { background: #1e293b; color: #e2e8f0; border: 1px solid rgba(236,72,153,0.35);"
+            " border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 700; }"
+            "QPushButton:hover { border-color: #EC4899; }"
         )
         self._start.dateChanged.connect(lambda _: self._update_preview())
         top.addWidget(self._start)
@@ -1110,6 +1151,62 @@ class ScheduledPost:
 # Main widget
 # ---------------------------------------------------------------------------
 
+def _draft_file() -> Path:
+    from config.paths import USER_CONFIG_DIR
+    return USER_CONFIG_DIR / "upload_draft.json"
+
+
+def save_upload_draft(videos: dict[str, dict], scheduled: bool) -> int:
+    """Grava os vídeos ainda não enviados (legenda, hashtags, horário). Retorna quantos salvou.
+
+    Lista vazia apaga o rascunho.
+    """
+    import json
+
+    entries = [
+        {
+            "path": path,
+            "caption": data.get("caption", ""),
+            "hashtags": list(data.get("hashtags", [])),
+            "schedule": data["schedule"].isoformat(timespec="minutes") if data.get("schedule") else None,
+        }
+        for path, data in videos.items()
+        if data.get("status") != "ok"
+    ]
+    target = _draft_file()
+    if not entries:
+        target.unlink(missing_ok=True)
+        return 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "scheduled": scheduled,
+        "videos": entries,
+    }
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(target)
+    return len(entries)
+
+
+def load_upload_draft() -> dict | None:
+    """Lê o rascunho salvo; None se não existir ou estiver corrompido."""
+    import json
+
+    target = _draft_file()
+    if not target.exists():
+        return None
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        for v in payload.get("videos", []):
+            v["schedule"] = datetime.fromisoformat(v["schedule"]) if v.get("schedule") else None
+        return payload
+    except Exception as exc:
+        logger.warning(f"Rascunho de upload ilegível ({target}): {exc}")
+        return None
+
+
 class UploadWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -1124,6 +1221,7 @@ class UploadWidget(QWidget):
         self._ai_thread: AIGeneratorThread | None = None
         self._init_ui()
         self._refresh_accounts()
+        self._restore_draft()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -1190,11 +1288,12 @@ class UploadWidget(QWidget):
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background: {self._BORDER};
+                background: rgba(59, 130, 246, 0.12);
                 border-color: {self._ACCENT};
-                color: {self._ACCENT};
+                color: #93C5FD;
             }}
-            QPushButton:pressed {{ background: #0D1520; }}
+            QPushButton:pressed {{ background: rgba(59, 130, 246, 0.22); }}
+            QPushButton:disabled {{ color: {self._TEXT_DIM}; border-color: {self._BORDER}; }}
         """
 
     def _divider(self) -> QFrame:
@@ -1688,7 +1787,31 @@ class UploadWidget(QWidget):
             }}
         """)
         self.btn_upload.clicked.connect(self._handle_action)
-        root.addWidget(self.btn_upload)
+
+        self.btn_save_draft = QPushButton("💾  Salvar para depois")
+        self.btn_save_draft.setMinimumHeight(54)
+        self.btn_save_draft.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_save_draft.setToolTip(
+            "Guarda os vídeos, legendas, hashtags e horários.\n"
+            "Ao abrir o app de novo, a lista volta como estava."
+        )
+        self.btn_save_draft.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 13px; font-weight: 700; padding: 0 22px;
+                background: {self._BG_CARD}; color: {self._TEXT_PRI};
+                border: 1.5px solid {self._BORDER}; border-radius: 16px;
+            }}
+            QPushButton:hover {{ border-color: {self._ACCENT}; color: #93C5FD; }}
+            QPushButton:pressed {{ background: {self._BG_FIELD}; }}
+            QPushButton:disabled {{ color: {self._TEXT_SEC}; }}
+        """)
+        self.btn_save_draft.clicked.connect(self._save_draft)
+
+        cta_row = QHBoxLayout()
+        cta_row.setSpacing(10)
+        cta_row.addWidget(self.btn_save_draft)
+        cta_row.addWidget(self.btn_upload, 1)
+        root.addLayout(cta_row)
 
         self.lbl_progress = QLabel("")
         self.lbl_progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1702,6 +1825,8 @@ class UploadWidget(QWidget):
         self.file_list.currentItemChanged.connect(self._on_file_selected)
         self.txt_caption.textChanged.connect(self._on_meta_edited)
         self.hashtag_bar.changed.connect(self._on_meta_edited)
+        for btn in self.findChildren(QPushButton):
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._update_meta_fields()
 
     # ------------------------------------------------------------------
@@ -1818,6 +1943,54 @@ class UploadWidget(QWidget):
             data["caption"] = self.txt_caption.toPlainText()
             data["hashtags"] = self.hashtag_bar.get_tags()
             self._refresh_item(self._current_video)
+
+    def _save_draft(self, silent: bool = False) -> None:
+        """Salva o rascunho; `silent` só atualiza o arquivo se ele já existir (pós-envio)."""
+        if silent and not _draft_file().exists():
+            return
+        try:
+            n = save_upload_draft(self._video_metadata, self.radio_later.isChecked())
+        except OSError as exc:
+            logger.error(f"Falha ao salvar rascunho: {exc}")
+            if not silent:
+                QMessageBox.critical(self, "Erro", f"Não consegui salvar o rascunho:\n{exc}")
+            return
+        if silent:
+            return
+        if n:
+            self.lbl_progress.setText(
+                f"💾 Rascunho salvo ({n} vídeo(s)) às {datetime.now():%H:%M} — volta ao abrir o app."
+            )
+        else:
+            self.lbl_progress.setText("💾 Nada pendente — rascunho apagado.")
+
+    def _restore_draft(self) -> None:
+        """Recarrega o rascunho salvo (pula arquivos que não existem mais)."""
+        payload = load_upload_draft()
+        if not payload:
+            return
+        missing = 0
+        for v in payload.get("videos", []):
+            path = v.get("path", "")
+            if not Path(path).exists():
+                missing += 1
+                continue
+            self._add_video(path)
+            self._video_metadata[path].update(
+                caption=v.get("caption", ""),
+                hashtags=list(v.get("hashtags", [])),
+                schedule=v.get("schedule"),
+            )
+            self._refresh_item(path)
+        if payload.get("scheduled"):
+            self.radio_later.setChecked(True)
+            self.sched_panel.setVisible(True)
+        self._update_meta_fields()
+        restored = len(payload.get("videos", [])) - missing
+        msg = f"💾 Rascunho de {payload.get('saved_at', '')[:16].replace('T', ' ')} restaurado: {restored} vídeo(s)"
+        if missing:
+            msg += f" ({missing} arquivo(s) não encontrados foram ignorados)"
+        self.lbl_progress.setText(msg + ".")
 
     def _apply_tags_to_all(self):
         if not self._current_video:
@@ -2170,6 +2343,7 @@ class UploadWidget(QWidget):
                 self._refresh_item(path)
 
         self._update_sched_info()
+        self._save_draft(silent=True)  # tira do rascunho o que já foi enviado
         ok_tasks = [t for t in tasks if t["path"] not in failed_set]
         for t in ok_tasks:
             if t["schedule_time"]:
