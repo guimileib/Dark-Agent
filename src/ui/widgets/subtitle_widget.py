@@ -133,7 +133,7 @@ class SubtitleWidget(QWidget):
         self.video_list.setMaximumHeight(130)
         self.video_list.setStyleSheet("""
             QListWidget {
-                background-color: rgba(15, 23, 42, 0.8);
+                background-color: rgba(9, 9, 11, 0.8);
                 border: 1px solid rgba(59, 130, 246, 0.3);
                 border-radius: 8px;
                 color: white;
@@ -160,7 +160,7 @@ class SubtitleWidget(QWidget):
                 border: 1px solid #60a5fa;
             }
             QListWidget::indicator:unchecked {
-                background-color: rgba(30,41,59,0.8);
+                background-color: rgba(24, 24, 27,0.8);
                 border-radius: 3px;
                 border: 1px solid rgba(255,255,255,0.2);
             }
@@ -171,7 +171,7 @@ class SubtitleWidget(QWidget):
         self.lbl_no_videos = QLabel("Nenhum vídeo adicionado.\nClique em \"Adicionar Vídeos\" abaixo.")
         self.lbl_no_videos.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_no_videos.setStyleSheet("""
-            color: #64748b;
+            color: #71717a;
             font-size: 12px;
             background: transparent;
             border: none;
@@ -243,14 +243,14 @@ class SubtitleWidget(QWidget):
         self.btn_uncheck_all.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_uncheck_all.setStyleSheet("""
             QPushButton {
-                background-color: rgba(100,116,139,0.15);
-                color: #94a3b8;
-                border: 1px solid rgba(100,116,139,0.3);
+                background-color: rgba(113, 113, 122,0.15);
+                color: #a1a1aa;
+                border: 1px solid rgba(113, 113, 122,0.3);
                 border-radius: 8px;
                 padding: 6px 10px;
                 font-size: 11px;
             }
-            QPushButton:hover { background-color: rgba(100,116,139,0.28); }
+            QPushButton:hover { background-color: rgba(113, 113, 122,0.28); }
         """)
         video_btn_row2.addWidget(self.btn_uncheck_all)
         left_layout.addLayout(video_btn_row2)
@@ -268,7 +268,7 @@ class SubtitleWidget(QWidget):
         left_layout.addWidget(estilos_titulo)
 
         estilos_subtitulo = QLabel("Escolha o estilo visual das legendas")
-        estilos_subtitulo.setStyleSheet("color: #94a3b8; font-size: 12px; margin-bottom: 8px;")
+        estilos_subtitulo.setStyleSheet("color: #a1a1aa; font-size: 12px; margin-bottom: 8px;")
         left_layout.addWidget(estilos_subtitulo)
 
         # Scroll Area para Grid de Estilos
@@ -305,8 +305,8 @@ class SubtitleWidget(QWidget):
             btn.setProperty("nome_simples", nome_simples)
             btn.setStyleSheet("""
                 QToolButton {
-                    background-color: rgba(15, 23, 42, 0.6);
-                    color: #cbd5e1;
+                    background-color: rgba(9, 9, 11, 0.6);
+                    color: #d4d4d8;
                     border: 1.5px solid rgba(255, 255, 255, 0.08);
                     border-radius: 14px;
                     font-weight: 700;
@@ -316,7 +316,7 @@ class SubtitleWidget(QWidget):
                 QToolButton:hover {
                     background-color: rgba(59, 130, 246, 0.12);
                     border: 1.5px solid rgba(59, 130, 246, 0.4);
-                    color: #f0f4ff;
+                    color: #fafafa;
                 }
                 QToolButton:checked {
                     background-color: rgba(59, 130, 246, 0.18);
@@ -360,7 +360,7 @@ class SubtitleWidget(QWidget):
         self.preview_canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_canvas.setStyleSheet("""
             QLabel {
-                background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, stop:0 #1e293b, stop:1 #0f172a);
+                background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, stop:0 #18181b, stop:1 #09090b);
                 border-radius: 16px;
                 border: 2px solid rgba(59, 130, 246, 0.4);
                 padding: 4px;
@@ -371,7 +371,7 @@ class SubtitleWidget(QWidget):
         
         # Configurações — dentro de QScrollArea para não cortar em telas pequenas
         config_group = QWidget()
-        config_group.setStyleSheet("background-color: rgba(30, 41, 59, 0.5); border-radius: 12px; padding: 10px;")
+        config_group.setStyleSheet("background-color: rgba(24, 24, 27, 0.5); border-radius: 12px; padding: 10px;")
         config_layout = QVBoxLayout(config_group)
         config_layout.setSpacing(6)
 
@@ -382,7 +382,7 @@ class SubtitleWidget(QWidget):
         self.tamanho_combo = QComboBox()
         self.tamanho_combo.setStyleSheet("""
             QComboBox {
-                background-color: rgba(30, 41, 59, 0.8);
+                background-color: rgba(24, 24, 27, 0.8);
                 color: white;
                 border: 1px solid rgba(255, 255, 255, 0.2);
                 border-radius: 6px;
@@ -404,7 +404,7 @@ class SubtitleWidget(QWidget):
         self.posicao_combo = QComboBox()
         self.posicao_combo.setStyleSheet("""
             QComboBox {
-                background-color: rgba(30, 41, 59, 0.8);
+                background-color: rgba(24, 24, 27, 0.8);
                 color: white;
                 border: 1px solid rgba(255, 255, 255, 0.2);
                 border-radius: 6px;
@@ -428,7 +428,7 @@ class SubtitleWidget(QWidget):
         self.btn_cor.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_cor.setStyleSheet("""
             QPushButton {
-                background-color: rgba(30, 41, 59, 0.8);
+                background-color: rgba(24, 24, 27, 0.8);
                 color: white;
                 border: 1px solid rgba(255, 255, 255, 0.2);
                 border-radius: 8px;
@@ -451,7 +451,7 @@ class SubtitleWidget(QWidget):
         self.btn_cor_borda.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_cor_borda.setStyleSheet("""
             QPushButton {
-                background-color: rgba(30, 41, 59, 0.8);
+                background-color: rgba(24, 24, 27, 0.8);
                 color: white;
                 border: 1px solid rgba(255, 255, 255, 0.2);
                 border-radius: 8px;
@@ -605,11 +605,11 @@ class SubtitleWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         accent_color = QColor("#3b82f6")     # azul padrão do app
-        text_color = QColor("#f8fafc")       # branco quase puro
-        border_color = QColor("#0f172a")     # slate-900 para outline sutil
+        text_color = QColor("#fafafa")       # branco quase puro
+        border_color = QColor("#09090b")     # slate-900 para outline sutil
 
         # ── Pill de fundo (slate translúcido uniforme) ──
-        bg = QColor("#1e293b")
+        bg = QColor("#18181b")
         bg.setAlpha(60)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(bg))
@@ -680,7 +680,7 @@ class SubtitleWidget(QWidget):
 
             btn.setStyleSheet(f"""
                 QToolButton {{
-                    background-color: rgba(15, 23, 42, 0.6);
+                    background-color: rgba(9, 9, 11, 0.6);
                     color: {cor_hex};
                     border: 1.5px solid rgba(255, 255, 255, 0.08);
                     border-radius: 14px;
@@ -691,7 +691,7 @@ class SubtitleWidget(QWidget):
                 QToolButton:hover {{
                     background-color: rgba(59, 130, 246, 0.12);
                     border: 1.5px solid {cor_borda_css};
-                    color: #f0f4ff;
+                    color: #fafafa;
                 }}
                 QToolButton:checked {{
                     background-color: rgba(255, 255, 255, 0.08);

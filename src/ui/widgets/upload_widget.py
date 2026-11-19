@@ -282,7 +282,7 @@ class DrumRoll(QWidget):
         font.setBold(True)
         self._lbl.setFont(font)
         self._lbl.setStyleSheet(
-            "color: #ffffff; background: #1e293b; border: 2px solid #3b82f6;"
+            "color: #ffffff; background: #18181b; border: 2px solid #3b82f6;"
             " border-radius: 8px;"
         )
 
@@ -297,7 +297,7 @@ class DrumRoll(QWidget):
 
         for btn in (self._btn_up, self._btn_down):
             btn.setStyleSheet(
-                "QPushButton { background: #334155; color: #94a3b8; border: none;"
+                "QPushButton { background: #27272a; color: #a1a1aa; border: none;"
                 " border-radius: 6px; font-size: 13px; }"
                 "QPushButton:hover { background: #3b82f6; color: white; }"
                 "QPushButton:pressed { background: #2563eb; }"
@@ -364,7 +364,7 @@ class DarkCalendar(QCalendarWidget):
         self.setFixedSize(300, 290)
 
         header_fmt = QTextCharFormat()
-        header_fmt.setForeground(QBrush(QColor("#64748B")))
+        header_fmt.setForeground(QBrush(QColor("#71717a")))
         header_fmt.setFontWeight(QFont.Weight.DemiBold)
         self.setHeaderTextFormat(header_fmt)
         for day in Qt.DayOfWeek:
@@ -382,22 +382,22 @@ class DarkCalendar(QCalendarWidget):
             if btn is not None:
                 btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet("""
-            QCalendarWidget QWidget { background-color: #0F172A; color: #E2E8F0;
-                alternate-background-color: #0F172A; }
+            QCalendarWidget QWidget { background-color: #09090b; color: #e4e4e7;
+                alternate-background-color: #09090b; }
             QCalendarWidget QWidget#qt_calendar_navigationbar {
-                background: #0F172A; border: none; padding: 4px 4px 2px 4px; min-height: 38px; }
-            QCalendarWidget QToolButton { color: #F0F4FF; background: transparent; border: none;
+                background: #09090b; border: none; padding: 4px 4px 2px 4px; min-height: 38px; }
+            QCalendarWidget QToolButton { color: #fafafa; background: transparent; border: none;
                 font-size: 14px; font-weight: 700; padding: 4px 8px; border-radius: 8px; }
-            QCalendarWidget QToolButton:hover { background: #1E293B; }
+            QCalendarWidget QToolButton:hover { background: #18181b; }
             QCalendarWidget QToolButton#qt_calendar_prevmonth,
             QCalendarWidget QToolButton#qt_calendar_nextmonth {
                 font-size: 22px; font-weight: 400; min-width: 30px; max-width: 30px; padding: 0 0 3px 0; }
             QCalendarWidget QToolButton::menu-indicator { image: none; width: 0; }
-            QCalendarWidget QMenu { background: #1E293B; color: #E2E8F0; border: 1px solid #334155; }
+            QCalendarWidget QMenu { background: #18181b; color: #e4e4e7; border: 1px solid #27272a; }
             QCalendarWidget QMenu::item:selected { background: #3B82F6; }
-            QCalendarWidget QSpinBox { background: #1E293B; color: #E2E8F0; border: 1px solid #334155;
+            QCalendarWidget QSpinBox { background: #18181b; color: #e4e4e7; border: 1px solid #27272a;
                 border-radius: 6px; padding: 2px 6px; selection-background-color: #3B82F6; }
-            QCalendarWidget QAbstractItemView { background-color: #0F172A; outline: 0; border: none;
+            QCalendarWidget QAbstractItemView { background-color: #09090b; outline: 0; border: none;
                 font-size: 13px; selection-background-color: transparent; }
         """)
 
@@ -429,9 +429,9 @@ class DarkCalendar(QCalendarWidget):
         if selected:
             color = QColor("#FFFFFF")
         elif enabled:
-            color = QColor("#F0F4FF")
+            color = QColor("#fafafa")
         else:
-            color = QColor("#334155")
+            color = QColor("#27272a")
         painter.setPen(color)
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(qdate.day()))
         painter.restore()
@@ -470,8 +470,8 @@ class DatePickerButton(QPushButton):
         popup = QFrame(self, Qt.WindowType.Popup)
         popup.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         popup.setStyleSheet("""
-            QFrame#calPopup { background: #0F172A; border: 1px solid #1F2D3D; border-radius: 14px; }
-            QPushButton { background: #1E293B; color: #CBD5E1; border: 1px solid #334155;
+            QFrame#calPopup { background: #09090b; border: 1px solid #18181b; border-radius: 14px; }
+            QPushButton { background: #18181b; color: #d4d4d8; border: 1px solid #27272a;
                 border-radius: 13px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
             QPushButton:hover { background: rgba(236,72,153,0.18); color: #FFFFFF;
                 border-color: #EC4899; }
@@ -543,7 +543,7 @@ class InlineDateTimePicker(QWidget):
             frame.setMinimumWidth(190)
             frame.setStyleSheet(f"""
                 QFrame#dtCard {{
-                    background: #0D1520; border: 1.5px solid #1F2D3D; border-radius: 14px;
+                    background: #0c0c0e; border: 1.5px solid #18181b; border-radius: 14px;
                 }}
                 QFrame#dtCard:hover {{ border-color: {accent}; }}
             """)
@@ -564,7 +564,7 @@ class InlineDateTimePicker(QWidget):
         self._date_edit.setToolTip("Clique para abrir o calendário")
         self._date_edit.setStyleSheet("""
             QPushButton {
-                background: transparent; border: none; color: #F0F4FF; text-align: left;
+                background: transparent; border: none; color: #fafafa; text-align: left;
                 font-size: 20px; font-weight: 800; padding: 2px 0;
             }
             QPushButton:hover { color: #F9A8D4; }
@@ -583,7 +583,7 @@ class InlineDateTimePicker(QWidget):
         self._time_edit.setToolTip("Digite ou role o mouse sobre a hora/minuto")
         self._time_edit.setStyleSheet("""
             QTimeEdit {
-                background: transparent; border: none; color: #F0F4FF; padding: 0;
+                background: transparent; border: none; color: #fafafa; padding: 0;
                 font-size: 20px; font-weight: 800; selection-background-color: #3B82F6;
             }
         """)
@@ -668,9 +668,9 @@ class InlineDateTimePicker(QWidget):
     # ── Shortcut chips + editor ──────────────────────────────────────
     _FAV_BTN_STYLE = """
         QPushButton {
-            background: rgba(30, 41, 59, 0.5);
-            color: #94a3b8;
-            border: 1px solid rgba(51, 65, 85, 0.5);
+            background: rgba(24, 24, 27, 0.5);
+            color: #a1a1aa;
+            border: 1px solid rgba(39, 39, 42, 0.5);
             border-radius: 12px;
             padding: 0 14px; min-height: 26px;
             font-size: 12px;
@@ -678,7 +678,7 @@ class InlineDateTimePicker(QWidget):
         }
         QPushButton:hover {
             background: rgba(59, 130, 246, 0.18);
-            color: #e2e8f0;
+            color: #e4e4e7;
             border-color: rgba(59, 130, 246, 0.4);
         }
         QPushButton:pressed {
@@ -690,15 +690,15 @@ class InlineDateTimePicker(QWidget):
     _PENCIL_BTN_STYLE = """
         QPushButton {
             background: transparent;
-            color: #64748b;
-            border: 1px solid rgba(51, 65, 85, 0.5);
+            color: #71717a;
+            border: 1px solid rgba(39, 39, 42, 0.5);
             border-radius: 12px;
             padding: 0 10px; min-height: 26px;
             font-size: 13px;
         }
         QPushButton:hover {
             background: rgba(139, 92, 246, 0.15);
-            color: #e2e8f0;
+            color: #e4e4e7;
             border-color: rgba(139, 92, 246, 0.5);
         }
     """
@@ -713,7 +713,7 @@ class InlineDateTimePicker(QWidget):
 
         lbl_fav = QLabel("Atalhos:")
         lbl_fav.setStyleSheet(
-            "color: #475569; font-size: 11px; font-weight: 600;"
+            "color: #3f3f46; font-size: 11px; font-weight: 600;"
             " background: transparent; border: none;"
         )
         self._fav_row.addWidget(lbl_fav)
@@ -757,11 +757,11 @@ class ShortcutsEditorDialog(QDialog):
         self._times: list[str] = list(times)
 
         self.setStyleSheet("""
-            QDialog { background: #0f172a; }
-            QLabel { color: #e2e8f0; font-size: 12px; background: transparent; }
+            QDialog { background: #09090b; }
+            QLabel { color: #e4e4e7; font-size: 12px; background: transparent; }
             QListWidget {
-                background: #1e293b;
-                color: #e2e8f0;
+                background: #18181b;
+                color: #e4e4e7;
                 border: 1px solid rgba(59, 130, 246, 0.25);
                 border-radius: 8px;
                 padding: 4px;
@@ -773,8 +773,8 @@ class ShortcutsEditorDialog(QDialog):
                 color: #ffffff;
             }
             QTimeEdit {
-                background: #1e293b;
-                color: #e2e8f0;
+                background: #18181b;
+                color: #e4e4e7;
                 border: 1px solid rgba(59, 130, 246, 0.25);
                 border-radius: 6px;
                 padding: 4px 8px;
@@ -783,7 +783,7 @@ class ShortcutsEditorDialog(QDialog):
             }
             QPushButton {
                 background: rgba(59, 130, 246, 0.15);
-                color: #e2e8f0;
+                color: #e4e4e7;
                 border: 1px solid rgba(59, 130, 246, 0.35);
                 border-radius: 6px;
                 padding: 6px 14px;
@@ -876,7 +876,7 @@ class DailyPatternDialog(ShortcutsEditorDialog):
         today = QDate.currentDate()
         self._start.setDateRange(today, today.addDays(SCHEDULE_MAX_AHEAD.days))
         self._start.setStyleSheet(
-            "QPushButton { background: #1e293b; color: #e2e8f0; border: 1px solid rgba(236,72,153,0.35);"
+            "QPushButton { background: #18181b; color: #e4e4e7; border: 1px solid rgba(236,72,153,0.35);"
             " border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 700; }"
             "QPushButton:hover { border-color: #EC4899; }"
         )
@@ -943,8 +943,8 @@ class HashtagBar(QWidget):
         self._input = QLineEdit()
         self._input.setPlaceholderText("# Adicionar hashtag  (Enter para confirmar)")
         self._input.setStyleSheet(
-            "QLineEdit { background: #0f172a; border: 1px solid #334155; border-radius: 8px;"
-            " color: #e2e8f0; padding: 6px 10px; font-size: 13px; }"
+            "QLineEdit { background: #09090b; border: 1px solid #27272a; border-radius: 8px;"
+            " color: #e4e4e7; padding: 6px 10px; font-size: 13px; }"
             "QLineEdit:focus { border-color: #3b82f6; }"
         )
         self._input.returnPressed.connect(self._add_from_input)
@@ -977,8 +977,8 @@ class HashtagBar(QWidget):
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet(
             "QScrollArea { border: none; background: transparent; }"
-            "QScrollBar:horizontal { height: 4px; background: #1e293b; border-radius: 2px; }"
-            "QScrollBar::handle:horizontal { background: #334155; border-radius: 2px; }"
+            "QScrollBar:horizontal { height: 4px; background: #18181b; border-radius: 2px; }"
+            "QScrollBar::handle:horizontal { background: #27272a; border-radius: 2px; }"
         )
         outer.addWidget(scroll)
 
@@ -986,15 +986,15 @@ class HashtagBar(QWidget):
         suggestion_row = QHBoxLayout()
         suggestion_row.setSpacing(4)
         lbl_sug = QLabel("Sugestões:")
-        lbl_sug.setStyleSheet("color: #64748b; font-size: 11px; background: transparent;")
+        lbl_sug.setStyleSheet("color: #71717a; font-size: 11px; background: transparent;")
         suggestion_row.addWidget(lbl_sug)
         for tag in ["#fyp", "#viral", "#foryou", "#trending", "#fy"]:
             btn = QPushButton(tag)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(
-                "QPushButton { background: #1e293b; color: #94a3b8; border: 1px solid #334155;"
+                "QPushButton { background: #18181b; color: #a1a1aa; border: 1px solid #27272a;"
                 " border-radius: 12px; padding: 2px 8px; font-size: 11px; }"
-                "QPushButton:hover { background: #334155; color: #e2e8f0; }"
+                "QPushButton:hover { background: #27272a; color: #e4e4e7; }"
             )
             btn.clicked.connect(lambda checked, t=tag: self._add_tag(t))
             suggestion_row.addWidget(btn)
@@ -1041,7 +1041,7 @@ class HashtagBar(QWidget):
             close_btn.setFixedSize(16, 16)
             close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             close_btn.setStyleSheet(
-                "QPushButton { background: transparent; border: none; color: #64748b; font-size: 10px; }"
+                "QPushButton { background: transparent; border: none; color: #71717a; font-size: 10px; }"
                 "QPushButton:hover { color: #ef4444; }"
             )
             close_btn.clicked.connect(lambda _, t=tag: self._remove_tag(t))
@@ -1227,18 +1227,18 @@ class UploadWidget(QWidget):
     # UI construction
     # ------------------------------------------------------------------
 
-    # Palette constants — single source of truth for the Apple-style theme
-    _BG_CARD     = "#111827"      # card background (near-black, slightly blue)
-    _BG_FIELD    = "#0D1520"      # input field background
-    _BORDER      = "#1F2D3D"      # subtle card border
+    # Paleta — espelha os tokens zinc de modern_theme.qss
+    _BG_CARD     = "#0c0c0e"      # card (zinc)
+    _BG_FIELD    = "#09090b"      # input field background
+    _BORDER      = "#27272a"      # borda (zinc-800)
     _BORDER_FOCUS= "#3B82F6"      # blue focus ring
-    _TEXT_PRI    = "#F0F4FF"      # primary text (near-white, cool tint)
-    _TEXT_SEC    = "#64748B"      # secondary / hint text
-    _TEXT_DIM    = "#374151"      # very dim (placeholders)
+    _TEXT_PRI    = "#fafafa"      # primary text (near-white, cool tint)
+    _TEXT_SEC    = "#71717a"      # secondary / hint text
+    _TEXT_DIM    = "#3f3f46"      # very dim (placeholders)
     _ACCENT      = "#3B82F6"      # TikTok-blue accent
     _PINK        = "#EC4899"      # TikTok-pink CTA
 
-    def _card_style(self, radius: int = 18) -> str:
+    def _card_style(self, radius: int = 12) -> str:
         """Stylesheet de QGroupBox no estilo card."""
         return f"""
             QGroupBox {{
@@ -1318,7 +1318,7 @@ class UploadWidget(QWidget):
                 width: 6px; background: transparent; margin: 0;
             }
             QScrollBar::handle:vertical {
-                background: #1F2D3D; border-radius: 3px; min-height: 30px;
+                background: #18181b; border-radius: 3px; min-height: 30px;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
@@ -1376,7 +1376,7 @@ class UploadWidget(QWidget):
             }}
             QPushButton:hover {{ background: #2563EB; }}
             QPushButton:pressed {{ background: #1D4ED8; }}
-            QPushButton:disabled {{ background: #1F2D3D; color: {self._TEXT_SEC}; }}
+            QPushButton:disabled {{ background: #18181b; color: {self._TEXT_SEC}; }}
         """)
         self.btn_add_account.clicked.connect(self._on_add_account)
 
@@ -1756,36 +1756,7 @@ class UploadWidget(QWidget):
         self.btn_upload = QPushButton("🚀  Enviar para TikTok")
         self.btn_upload.setMinimumHeight(54)
         self.btn_upload.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_upload.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 15px;
-                font-weight: 800;
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #EC4899, stop:1 #8B5CF6
-                );
-                color: white;
-                border: none;
-                border-radius: 16px;
-                letter-spacing: 0.5px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #DB2777, stop:1 #7C3AED
-                );
-            }}
-            QPushButton:pressed {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #BE185D, stop:1 #6D28D9
-                );
-            }}
-            QPushButton:disabled {{
-                background: {self._BORDER};
-                color: {self._TEXT_SEC};
-            }}
-        """)
+        self.btn_upload.setObjectName("CtaButton")
         self.btn_upload.clicked.connect(self._handle_action)
 
         self.btn_save_draft = QPushButton("💾  Salvar para depois")

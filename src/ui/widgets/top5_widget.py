@@ -35,7 +35,7 @@ _TITULO_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 
 _LIST_STYLE = """
     QListWidget {
-        background-color: rgba(10, 15, 30, 0.9);
+        background-color: rgba(12, 12, 14, 0.9);
         border: 1px solid rgba(59, 130, 246, 0.25);
         border-radius: 10px;
         color: white;
@@ -182,7 +182,7 @@ class LegendaReviewDialog(QDialog):
         dica = QLabel(
             "Corrija o texto direto na tabela. Apagar o texto remove a linha da legenda."
         )
-        dica.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        dica.setStyleSheet("color: #a1a1aa; font-size: 12px;")
         lay.addWidget(dica)
 
         segs = transcricao.get("segmentos", [])
@@ -273,7 +273,7 @@ class Top5Widget(QWidget):
         left_lay.addLayout(modo_row)
 
         self.dica_modo = QLabel()
-        self.dica_modo.setStyleSheet("color: #64748b; font-size: 12px;")
+        self.dica_modo.setStyleSheet("color: #71717a; font-size: 12px;")
         self.dica_modo.setWordWrap(True)
         left_lay.addWidget(self.dica_modo)
 
@@ -416,19 +416,7 @@ class Top5Widget(QWidget):
 
         self.btn_gerar = QPushButton("🎬  Gerar Top 5")
         self.btn_gerar.setMinimumHeight(48)
-        self.btn_gerar.setStyleSheet("""
-            QPushButton {
-                font-size: 14px; font-weight: bold; color: white; border: none;
-                border-radius: 12px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #7c3aed, stop:1 #3b82f6);
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #6d28d9, stop:1 #2563eb);
-            }
-            QPushButton:disabled { background: #334155; color: #64748b; }
-        """)
+        self.btn_gerar.setObjectName("CtaButton")
         self.btn_gerar.clicked.connect(self._gerar_video)
         right_lay.addWidget(self.btn_gerar)
 
@@ -443,7 +431,7 @@ class Top5Widget(QWidget):
         right_lay.addWidget(self.progress)
 
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self.status_label.setStyleSheet("color: #a1a1aa; font-size: 11px;")
         self.status_label.setWordWrap(True)
         right_lay.addWidget(self.status_label)
 
@@ -486,7 +474,7 @@ class Top5Widget(QWidget):
             item = QListWidgetItem(Path(caminho).name)
             item.setData(_MOMENTO_ROLE, caminho)
             item.setToolTip(caminho)
-            item.setForeground(QColor("#e2e8f0"))
+            item.setForeground(QColor("#e4e4e7"))
             self.fontes_list.addItem(item)
 
     def _fontes(self) -> list[Path]:
@@ -538,7 +526,7 @@ class Top5Widget(QWidget):
             item = QListWidgetItem()
             item.setData(_MOMENTO_ROLE, m)
             item.setData(_TITULO_ROLE, m.video.stem if titulos_do_arquivo else "")
-            item.setForeground(QColor("#e2e8f0"))
+            item.setForeground(QColor("#e4e4e7"))
             self.rank_list.addItem(item)
         self._refresh_ranking()
         self.rank_list.setCurrentRow(0)
