@@ -757,14 +757,13 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
         layout.addWidget(self.stack, 1)
 
-        # Botão processar (só visível em Legendas)
-        self.btn_processar = QPushButton("Processar com legendas")
+        self.btn_processar = QPushButton("Processar legendas")
         self.btn_processar.setObjectName("ProcessButton")
-        self.btn_processar.setMinimumHeight(44)
+        self.btn_processar.setMinimumHeight(38)
         self.btn_processar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_processar.clicked.connect(self.processar_video)
-        self.btn_processar.setVisible(False)
-        layout.addWidget(self.btn_processar)
+        # Vive no rodapé do painel "Detalhes" da página de Legendas.
+        self.subtitle_widget.set_action_button(self.btn_processar)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
@@ -800,17 +799,20 @@ class MainWindow(QMainWindow):
         self.current_page = ""
         self.show_page("download")
 
-        # Tamanho mínimo e padrão — permite redimensionamento livre
-        self.setMinimumSize(850, 650)
-        self.resize(1300, 820)
-
-        # Centralizar na tela
+        # Tamanho adaptado à área útil da tela (sem a barra de tarefas)
         screen = self.screen()
         if screen:
-            screen_geometry = screen.availableGeometry()
-            x = (screen_geometry.width() - 1300) // 2 + screen_geometry.x()
-            y = (screen_geometry.height() - 820) // 2 + screen_geometry.y()
-            self.move(x, y)
+            avail = screen.availableGeometry()
+            frame_h = 40  # barra de título do Windows fica fora do resize()
+            w = min(1300, avail.width() - 16)
+            h = min(820, avail.height() - frame_h)
+            self.setMinimumSize(min(850, w), min(560, h))
+            self.resize(w, h)
+            self.move(avail.x() + (avail.width() - w) // 2,
+                      avail.y() + max(0, (avail.height() - h - frame_h) // 2))
+        else:
+            self.setMinimumSize(850, 560)
+            self.resize(1300, 820)
     
     def aplicar_tema(self):
         """Aplica tema escuro moderno"""
@@ -914,8 +916,7 @@ class MainWindow(QMainWindow):
         self.crumb_sep2.setVisible(has_mid)
         self.crumb_current.setText(parts[-1])
 
-        # Botão de processar só em Legendas (e lista atualizada ao entrar)
-        self.btn_processar.setVisible(page_id == "legendas")
+        # Ao entrar em Legendas, atualiza a fila de vídeos
         if page_id == "legendas":
             self.atualizar_lista_videos_para_processar()
 

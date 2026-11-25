@@ -16,7 +16,7 @@ from PyQt6.QtGui import (
     QBrush, QColor, QFont, QIcon, QPainter, QPen, QTextCharFormat, QWheelEvent,
 )
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCalendarWidget, QComboBox,
+    QAbstractItemView, QApplication, QButtonGroup, QCalendarWidget, QComboBox,
     QDialog, QDialogButtonBox,
     QFileDialog, QFrame, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
@@ -508,8 +508,26 @@ class DatePickerButton(QPushButton):
         lay.addLayout(quick)
 
         popup.adjustSize()
-        popup.move(self.mapToGlobal(self.rect().bottomLeft()) + QPoint(0, 6))
+        popup.move(self._popup_pos(popup.sizeHint()))
         popup.show()
+
+    def _popup_pos(self, size) -> QPoint:
+        """Posição do popup dentro da área útil da tela.
+
+        Abre acima do botão quando não cabe embaixo (barra de tarefas).
+        """
+        below = self.mapToGlobal(self.rect().bottomLeft()) + QPoint(0, 6)
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return below
+        avail = screen.availableGeometry()
+        x, y = below.x(), below.y()
+        if y + size.height() > avail.bottom():
+            above = self.mapToGlobal(self.rect().topLeft()).y() - size.height() - 6
+            y = above if above >= avail.top() else avail.bottom() - size.height()
+        x = max(avail.left(), min(x, avail.right() - size.width()))
+        y = max(avail.top(), min(y, avail.bottom() + 1 - size.height()))
+        return QPoint(x, y)
 
 
 # ---------------------------------------------------------------------------
@@ -1754,13 +1772,13 @@ class UploadWidget(QWidget):
 
         # ── 6. CTA Upload button ──────────────────────────────────────
         self.btn_upload = QPushButton("🚀  Enviar para TikTok")
-        self.btn_upload.setMinimumHeight(54)
+        self.btn_upload.setMinimumHeight(46)
         self.btn_upload.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_upload.setObjectName("CtaButton")
         self.btn_upload.clicked.connect(self._handle_action)
 
         self.btn_save_draft = QPushButton("💾  Salvar para depois")
-        self.btn_save_draft.setMinimumHeight(54)
+        self.btn_save_draft.setMinimumHeight(46)
         self.btn_save_draft.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_save_draft.setToolTip(
             "Guarda os vídeos, legendas, hashtags e horários.\n"
@@ -1778,17 +1796,29 @@ class UploadWidget(QWidget):
         """)
         self.btn_save_draft.clicked.connect(self._save_draft)
 
+        # Rodapé fixo fora do scroll: o botão de enviar fica sempre visível
+        footer = QFrame()
+        footer.setObjectName("UploadFooter")
+        footer.setStyleSheet(
+            f"QFrame#UploadFooter {{ background: transparent;"
+            f" border-top: 1px solid {self._BORDER}; }}"
+        )
+        footer_lay = QVBoxLayout(footer)
+        footer_lay.setContentsMargins(16, 10, 16, 10)
+        footer_lay.setSpacing(6)
+
         cta_row = QHBoxLayout()
         cta_row.setSpacing(10)
         cta_row.addWidget(self.btn_save_draft)
         cta_row.addWidget(self.btn_upload, 1)
-        root.addLayout(cta_row)
+        footer_lay.addLayout(cta_row)
 
         self.lbl_progress = QLabel("")
         self.lbl_progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_progress.setWordWrap(True)
         self.lbl_progress.setStyleSheet(self._label_style(12, bold=False, color=self._TEXT_SEC))
-        root.addWidget(self.lbl_progress)
+        footer_lay.addWidget(self.lbl_progress)
+        outer.addWidget(footer)
 
         root.addStretch()
         

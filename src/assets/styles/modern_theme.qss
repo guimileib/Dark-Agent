@@ -456,7 +456,8 @@ QPushButton#danger:hover {
 }
 
 /* CTA principal (Legendas) — primary sólido, sem gradiente */
-QPushButton#ProcessButton, QPushButton#CtaButton {
+QPushButton#ProcessButton, QPushButton#CtaButton,
+QFrame#EditorPanel QPushButton#ProcessButton {
     background-color: #fafafa;
     color: #09090b;
     font-size: 14px;
@@ -464,13 +465,16 @@ QPushButton#ProcessButton, QPushButton#CtaButton {
     border-radius: 8px;
     padding: 10px 24px;
 }
-QPushButton#ProcessButton:hover, QPushButton#CtaButton:hover {
+QPushButton#ProcessButton:hover, QPushButton#CtaButton:hover,
+QFrame#EditorPanel QPushButton#ProcessButton:hover {
     background-color: #e4e4e7;
 }
-QPushButton#ProcessButton:pressed, QPushButton#CtaButton:pressed {
+QPushButton#ProcessButton:pressed, QPushButton#CtaButton:pressed,
+QFrame#EditorPanel QPushButton#ProcessButton:pressed {
     background-color: #d4d4d8;
 }
-QPushButton#ProcessButton:disabled, QPushButton#CtaButton:disabled {
+QPushButton#ProcessButton:disabled, QPushButton#CtaButton:disabled,
+QFrame#EditorPanel QPushButton#ProcessButton:disabled {
     background-color: #18181b;
     color: #52525b;
 }
@@ -844,4 +848,150 @@ QFrame[frameShape="5"] {
     color: #1f1f23;
     max-height: 1px;
     border: none;
+}
+
+/* --------------------------------------------------------------------------
+   Layout de editor (página Legendas): painéis, biblioteca, player, detalhes
+   -------------------------------------------------------------------------- */
+QFrame#EditorPanel {
+    background-color: #0f0f11;
+    border: 1px solid #1f1f23;
+    border-radius: 10px;
+}
+QFrame#EditorPanel QWidget {
+    background: transparent;
+}
+QFrame#EditorPanel QFrame#EditorPanelHead {
+    border: none;
+    border-bottom: 1px solid #1f1f23;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+}
+QFrame#EditorPanel QLabel#EditorPanelTitle {
+    color: #e4e4e7;
+    font-size: 12px;
+    font-weight: 600;
+}
+QLabel#MutedSmall {
+    color: #71717a;
+    font-size: 11px;
+}
+QFrame#EditorPanel QFrame#LibraryNav {
+    border: none;
+    border-right: 1px solid #1f1f23;
+}
+QFrame#EditorPanel QFrame#LibraryActions {
+    border: 1px solid #27272a;
+    border-radius: 8px;
+}
+QFrame#EditorPanel QPushButton#LibraryActionPrimary {
+    background-color: rgba(59, 130, 246, 0.10);
+    color: #60a5fa;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+}
+QFrame#EditorPanel QPushButton#LibraryActionPrimary:hover {
+    background-color: rgba(59, 130, 246, 0.18);
+}
+QFrame#EditorPanel QPushButton#CategoryButton {
+    background: transparent;
+    color: #a1a1aa;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 12px;
+    font-weight: 400;
+    text-align: left;
+}
+QFrame#EditorPanel QPushButton#CategoryButton:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+    color: #e4e4e7;
+}
+QFrame#EditorPanel QPushButton#CategoryButton:checked {
+    color: #60a5fa;
+    font-weight: 600;
+}
+QFrame#EditorPanel QLabel#LibrarySection {
+    color: #d4d4d8;
+    font-size: 12px;
+    font-weight: 500;
+}
+QFrame#EditorPanel QLabel#PlayerCanvas {
+    background-color: #050506;
+    border-radius: 6px;
+    color: #52525b;
+}
+QFrame#EditorPanel QLabel#PlayerAccent {
+    color: #60a5fa;
+    font-size: 11px;
+    font-weight: 600;
+}
+QFrame#EditorPanel QLabel#RatioPill {
+    color: #a1a1aa;
+    border: 1px solid #3f3f46;
+    border-radius: 3px;
+    font-size: 10px;
+    padding: 0 4px;
+}
+QFrame#EditorPanel QLabel#DetailLabel {
+    color: #71717a;
+    font-size: 12px;
+}
+QFrame#EditorPanel QLabel#DetailValue {
+    color: #e4e4e7;
+    font-size: 12px;
+}
+QFrame#EditorPanel QFrame#DetailSep,
+QFrame#EditorPanel QFrame#ToolbarDivider {
+    background-color: #1f1f23;
+    border: none;
+}
+QFrame#EditorPanel QPushButton#SwatchButton {
+    background-color: transparent;
+    color: #e4e4e7;
+    border: 1px solid #27272a;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-family: 'Cascadia Mono', 'Consolas', monospace;
+    font-size: 11px;
+    font-weight: 400;
+    text-align: left;
+}
+QFrame#EditorPanel QPushButton#SwatchButton:hover {
+    border-color: #3f3f46;
+    background-color: rgba(255, 255, 255, 0.04);
+}
+QFrame#EditorPanel QPushButton#ProcessButton {
+    padding: 8px 10px;
+}
+QFrame#EditorPanel QListWidget#QueueTrack {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+QFrame#EditorPanel QListWidget#QueueTrack::item {
+    background-color: rgba(59, 130, 246, 0.14);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    border-radius: 6px;
+    color: #dbeafe;
+    padding: 4px 8px;
+    font-size: 11px;
+}
+QFrame#EditorPanel QListWidget#QueueTrack::item:selected {
+    background-color: rgba(59, 130, 246, 0.28);
+    border: 1px solid #60a5fa;
+    color: #ffffff;
+}
+QFrame#EditorPanel QListWidget#QueueTrack::item:hover:!selected {
+    background-color: rgba(59, 130, 246, 0.20);
+}
+QFrame#EditorPanel QLabel#QueueEmpty {
+    color: #52525b;
+    font-size: 12px;
+    border: 1px dashed #27272a;
+    border-radius: 8px;
 }
