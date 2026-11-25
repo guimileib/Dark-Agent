@@ -63,12 +63,7 @@ def _load_font(tamanho: int, bold: bool = True) -> ImageFont.FreeTypeFont:
 
 
 def _draw_play_icon(draw: ImageDraw.Draw, w: int, h: int, img: Image.Image) -> None:
-    """Desenha um botão de play minimalista moderno no centro do canvas.
-
-    Estilo: rounded-square semitransparente com gradiente azul sutil, triângulo
-    de play branco e leve sombra externa — visual alinhado a players modernos
-    (YouTube/Netflix style).
-    """
+    """Desenha um botão de play (quadrado arredondado translúcido + triângulo) no centro do canvas."""
     cx, cy = w // 2, h // 2
     size = int(min(w, h) * 0.18)
 

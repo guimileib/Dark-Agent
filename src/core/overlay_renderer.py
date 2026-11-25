@@ -1,4 +1,4 @@
-"""Overlay renderer — burns text and image overlays onto video via FFmpeg."""
+"""Renderiza overlays de texto e imagem no vídeo via FFmpeg."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ _FALLBACK_FONTS = [
 
 
 def _resolve_font(nome: str, bold: bool = True) -> str:
-    """Resolve a font family name to an absolute .ttf path on Windows."""
+    """Resolve o nome de uma fonte para o caminho absoluto do .ttf no Windows."""
     key = nome.strip().lower()
     candidates = _FONT_MAP.get(key, [])
     if bold:
@@ -69,15 +69,12 @@ def _resolve_font(nome: str, bold: bool = True) -> str:
 
 
 def _escape_path(path: str) -> str:
-    """Escape a Windows path for FFmpeg filter expressions.
-
-    C:\\Users\\... -> C\\:/Users/...   (colons escaped, backslashes to forward)
-    """
+    """Escapa um caminho do Windows para filtros FFmpeg (barras para `/`, `:` escapado)."""
     return path.replace("\\", "/").replace(":", "\\:")
 
 
 def _escape_text(text: str) -> str:
-    """Escape text for FFmpeg drawtext filter."""
+    """Escapa texto para o filtro drawtext do FFmpeg."""
     # Order matters: backslash first, then the rest
     text = text.replace("\\", "\\\\")
     text = text.replace("'", "\\'")
@@ -87,7 +84,7 @@ def _escape_text(text: str) -> str:
 
 
 def _hex_to_ffmpeg(hex_color: str) -> str:
-    """Convert '#RRGGBB' to FFmpeg '0xRRGGBB' format."""
+    """Converte '#RRGGBB' para o formato '0xRRGGBB' do FFmpeg."""
     return "0x" + hex_color.lstrip("#")
 
 
@@ -118,7 +115,7 @@ _POS_IMAGE: dict[str, tuple[str, str]] = {
 
 
 class OverlayRenderer:
-    """Builds and runs FFmpeg commands to burn overlays onto a video."""
+    """Monta e executa os comandos FFmpeg que queimam overlays no vídeo."""
 
     def renderizar(
         self,
@@ -127,10 +124,7 @@ class OverlayRenderer:
         output_path: Path,
         preset: str = "medium",
     ) -> bool:
-        """Render all overlay elements onto *video_path* and write *output_path*.
-
-        Returns True on success.
-        """
+        """Renderiza todos os overlays de video_path em output_path. Retorna True se deu certo."""
         if not elementos:
             logger.warning("Nenhum elemento para renderizar")
             return False
@@ -169,7 +163,7 @@ class OverlayRenderer:
         timestamp: float,
         output_path: Path,
     ) -> bool:
-        """Extract a single frame at *timestamp* seconds as a PNG."""
+        """Extrai um frame em `timestamp` segundos como PNG."""
         cmd = [
             "ffmpeg",
             "-ss", f"{timestamp:.2f}",

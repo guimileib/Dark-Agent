@@ -38,7 +38,7 @@ class SplashScreen(QWidget):
         self._bg.setStyleSheet("""
             QWidget {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #080c16, stop:0.5 #0f172a, stop:1 #0c1425);
+                    stop:0 #09090b, stop:0.5 #09090b, stop:1 #0c0c0e);
                 border-radius: 20px;
                 border: 1px solid rgba(59, 130, 246, 0.15);
             }
@@ -57,14 +57,14 @@ class SplashScreen(QWidget):
         self.btn_minimize.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
-                color: #475569;
+                color: #3f3f46;
                 border: none;
                 font-size: 16px;
                 font-weight: bold;
                 border-radius: 15px;
             }
             QPushButton:hover {
-                color: #e2e8f0;
+                color: #e4e4e7;
                 background-color: rgba(59, 130, 246, 0.15);
             }
         """)
@@ -75,7 +75,7 @@ class SplashScreen(QWidget):
         self.logo_label = QLabel("DarkAgent Pro")
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.logo_label.setStyleSheet("""
-            color: #f8fafc;
+            color: #fafafa;
             font-size: 36px;
             font-weight: 800;
             font-family: 'Segoe UI', sans-serif;
@@ -100,7 +100,7 @@ class SplashScreen(QWidget):
         # ── Status + Progress bar ────────────────────────────────────
         self.status_label = QLabel("Initializing...")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("color: #64748b; font-size: 12px; font-weight: 500; letter-spacing: 0.3px;")
+        self.status_label.setStyleSheet("color: #71717a; font-size: 12px; font-weight: 500; letter-spacing: 0.3px;")
         self.layout_v.addWidget(self.status_label)
 
         self.progress = QProgressBar()
@@ -109,7 +109,7 @@ class SplashScreen(QWidget):
         self.progress.setFixedHeight(6)
         self.progress.setStyleSheet("""
             QProgressBar {
-                background-color: rgba(30, 41, 59, 0.5);
+                background-color: rgba(24, 24, 27, 0.5);
                 border-radius: 3px;
                 border: none;
             }

@@ -40,16 +40,7 @@ class Transcriber:
         logger.info(f"Transcriber inicializado - Modelo: {modelo}, Device: {self.device}")
     
     def transcrever(self, audio_path: Path, callback_progresso=None) -> dict:
-        """
-        Transcreve áudio usando Whisper
-        
-        Args:
-            audio_path: Caminho para o arquivo de áudio
-            callback_progresso: Função para atualizar progresso (opcional)
-        
-        Returns:
-            dict com resultado da transcrição
-        """
+        """Transcreve o áudio com Whisper e retorna o dict de resultado (segmentos + palavras)."""
         logger.info(f"Iniciando transcrição: {audio_path}")
         inicio = time.time()
         

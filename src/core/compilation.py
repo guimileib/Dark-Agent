@@ -1,10 +1,6 @@
-"""Montador de compilações — "Adivinhe a Música" / rankings para TikTok e Shorts.
+"""Montador de compilações ("Adivinhe a Música", rankings) para TikTok e Shorts.
 
-Junta 2–5 clipes em um vídeo só, com transição xfade entre eles, rótulo
-opcional por clipe (ex.: "Música 1", "#3") e logo do canal sobreposto o
-tempo todo. Tudo em UMA passada de FFmpeg (filter_complex), sem arquivos
-intermediários e sem dependência nova — usa o mesmo FFmpeg que o app já
-embute, com o encoder auto-detectado (NVENC/QSV/AMF/x264).
+Junta 2–5 clipes com xfade, rótulos e logo numa única passada de FFmpeg (filter_complex).
 """
 
 import logging
@@ -53,9 +49,14 @@ MAX_CLIPES = 5
 
 @dataclass
 class SegmentoCompilacao:
-    """Um clipe da compilação: vídeo + rótulo opcional queimado no topo."""
+    """Um clipe da compilação: vídeo + rótulo opcional queimado no topo.
+
+    inicio/duracao recortam o vídeo na própria passada (duracao=None = até o fim).
+    """
     video: Path
     rotulo: str = ""
+    inicio: float = 0.0
+    duracao: Optional[float] = None
 
 
 def _tem_audio(video_path: Path) -> bool:
@@ -89,11 +90,9 @@ def _fonte_sistema() -> Optional[str]:
 
 
 def calcular_offsets(duracoes: List[float], dur_transicao: float) -> List[float]:
-    """Offsets (em s) de cada xfade ao encadear os clipes.
+    """Offsets (s) de cada xfade.
 
-    O i-ésimo xfade (que junta o clipe i+1) começa em
-    sum(duracoes[:i+1]) - (i+1) * dur_transicao, porque cada transição
-    anterior já "comeu" dur_transicao do timeline acumulado.
+    Cada transição anterior já "comeu" dur_transicao do timeline acumulado.
     """
     offsets = []
     acumulado = 0.0
@@ -133,12 +132,7 @@ def construir_grafo(
 ) -> str:
     """Monta a string de filter_complex. Função pura — testável sem FFmpeg.
 
-    Args:
-        duracoes: duração de cada clipe em segundos (mesma ordem dos inputs 0..N-1).
-        audio_pads: pad de áudio de cada clipe (ex.: "0:a", ou "5:a" apontando
-            para um anullsrc quando o clipe não tem áudio).
-        rotulos: texto a queimar no topo de cada clipe ("" = sem rótulo).
-        logo_pad: pad do input do logo (ex.: "3:v"), ou None para sem logo.
+    audio_pads aponta para anullsrc quando o clipe não tem áudio; logo_pad=None = sem logo.
     """
     n = len(duracoes)
     partes: List[str] = []
@@ -209,11 +203,7 @@ def montar_compilacao(
     fps: int = 30,
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> bool:
-    """Renderiza a compilação. Bloqueante — chamar de um QThread.
-
-    Returns:
-        True se o arquivo final foi gerado com sucesso.
-    """
+    """Renderiza a compilação (bloqueante — chamar de um QThread). Retorna True se gerou o arquivo."""
     if not (MIN_CLIPES <= len(segmentos) <= MAX_CLIPES):
         logger.error(
             f"Compilação exige {MIN_CLIPES}–{MAX_CLIPES} clipes; recebi {len(segmentos)}"
@@ -234,6 +224,12 @@ def montar_compilacao(
         if not d or d <= 0:
             logger.error(f"Não consegui medir a duração de {seg.video}")
             return False
+        d -= max(0.0, seg.inicio)
+        if seg.duracao:
+            d = min(d, seg.duracao)
+        if d <= 0:
+            logger.error(f"Início {seg.inicio}s além do fim de {seg.video}")
+            return False
         duracoes.append(d)
 
     dur_transicao = clamp_transicao(duracoes, dur_transicao)
@@ -241,7 +237,10 @@ def montar_compilacao(
 
     # ── Inputs: clipes, anullsrc para clipes mudos, logo por último ──────────
     cmd_inputs: List[str] = []
-    for seg in segmentos:
+    for seg, d in zip(segmentos, duracoes):
+        if seg.inicio > 0 or seg.duracao:
+            # -ss/-t no input: seek preciso (há re-encode) sem pré-cortar o arquivo.
+            cmd_inputs += ["-ss", f"{max(0.0, seg.inicio):.3f}", "-t", f"{d:.3f}"]
         cmd_inputs += ["-i", str(seg.video)]
 
     audio_pads: List[str] = []

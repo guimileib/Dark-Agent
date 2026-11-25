@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-10-19T21:08:24Z",
+  "phase": null,
+  "phase_name": "default (sem fase GSD) — postagem em lote no TikTok (legendas IA, agendamento, uploader)",
+  "phase_dir": ".planning",
+  "plan": null,
+  "task": 7,
+  "total_tasks": 8,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "Uma janela só: versão do Chrome/Brave lida das pastas (sem `exe --version`), ChromeOptions novas no retry, fecha abas extras", "status": "done", "commit": "bd5b9d2"},
+    {"id": 2, "name": "UI de postagem: legenda + hashtags por vídeo, 'IA p/ todos', 'Aplicar a todos', status por vídeo (🚀/❌), reenvio só dos que falharam", "status": "done", "commit": "bd5b9d2"},
+    {"id": 3, "name": "Gemini: 1 request p/ N vídeos (JSON schema + dataclass CaptionResult, lotes de 20); modelo gemini-3.8-flash com fallback gemini-flash-latest; API key cifrada com DPAPI e mascarada", "status": "done", "commit": "bd5b9d2"},
+    {"id": 4, "name": "Agendamento por vídeo + 'Padrão diário' (build_daily_schedule: N horários/dia, pula < 20 min, limite 10 dias)", "status": "done", "commit": "bd5b9d2"},
+    {"id": 5, "name": "Uploader: fluxo próprio do TikTok Studio (substitui complete_upload_form da tiktok-uploader 1.1.5) — upload, descrição c/ hashtags escolhidas na sugestão, data/hora, post, dump HTML+PNG em logs/tiktok_debug/", "status": "done", "commit": "bd5b9d2 (parcial) + não commitado"},
+    {"id": 6, "name": "Robustez: hora só grava ao fechar o relógio, descrição re-digitada se o prefill sobrescrever (3x), navegador novo a cada 8 vídeos", "status": "done", "commit": "não commitado (src/core/uploader.py)"},
+    {"id": 7, "name": "Edge/Firefox via Selenium Manager (webdriver_manager usa msedgedriver.azureedge.net, fora do ar) + lote para cedo se o navegador não abrir", "status": "in_progress", "progress": "Código feito; Edge 155 abriu headless pelo Selenium Manager; falta o usuário reenviar os 36 vídeos e validar no TikTok real"}
+  ],
+  "remaining_tasks": [
+    {"id": 7, "name": "Usuário reenvia os 36 vídeos que falharam (Butt Out_03+ e Raisins_*) — conferir log e TikTok Studio → Publicações", "status": "not_started"},
+    {"id": 8, "name": "Commit + push das mudanças em src/core/uploader.py (só se o usuário pedir)", "status": "not_started"}
+  ],
+  "blockers": [],
+  "async_jobs": [],
+  "human_actions_pending": [
+    {"action": "Reabrir o app e reenviar os 36 vídeos programados (Chrome ou Edge), sem os 10 já agendados", "context": "Validação real das correções de hora/descrição/sessões/Edge — só testado com HTML simulado", "blocking": true},
+    {"action": "Decidir commit/push de src/core/uploader.py (staged + unstaged)", "context": "Usuário não pediu commit; bd5b9d2 foi commit dele", "blocking": false}
+  ],
+  "decisions": [
+    {"decision": "Nunca publicar com horário diferente do pedido: _schedule_matches confere 'Programar' marcado + valores exatos dos inputs; senão levanta e não clica Agendar", "rationale": "Falha segura — melhor não postar que postar na hora errada", "phase": null},
+    {"decision": "Manter tiktok-uploader==1.1.5 só pelo loop upload_videos (isola falha por vídeo); todo o fluxo por vídeo é nosso", "rationale": "Seletores da lib morreram (#tux-1, 'Post now', div.button-wrapper) e _set_video+threading.Event trava para sempre em erro", "phase": null},
+    {"decision": "Hashtag só vira link se houver sugestão com texto exatamente igual; senão fica texto", "rationale": "Evita trocar #fyp por #fypシ", "phase": null},
+    {"decision": "Agendamento usa o agendador do TikTok (PC pode desligar); fila local é só display", "rationale": "Botão renomeado para 'Remover da lista' — não cancela no TikTok", "phase": null}
+  ],
+  "uncommitted_files": ["src/core/uploader.py"],
+  "next_action": "Pedir ao usuário o resultado do reenvio dos 36 vídeos; ler logs/darkagent.log a partir do último 'Starting batch upload' (contar 'Schedule set and verified' vs 'Falha em') e os dumps mais novos em logs/tiktok_debug/",
+  "context_notes": "Já agendados (NÃO reenviar): All About Mormons_final_clip_14..21 (19/10 15h–23h, 20/10 15h–19h) e Butt Out_final_clip_01/02 (20/10 21h/23h). Testes de regressão ficam no scratchpad da sessão anterior (smoke_*.py, venv com tiktok-uploader 1.1.5) — não estão no repo. Python global do usuário tem tiktok-uploader 1.2.0 (Playwright) e sem selenium; o venv do projeto (G:\\DarkAgent\\venv) tem selenium 4.40 + 1.1.5."
+}

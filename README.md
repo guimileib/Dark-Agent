@@ -1,146 +1,107 @@
-# 🎬 DarkAgent Pro v2.0
+# 🎬 DarkAgent Pro
 
-Sistema desktop profissional para processamento de vídeos do YouTube com IA.
+🇧🇷 Português · [🇺🇸 English](README.en.md)
+
+App desktop para Windows que baixa vídeos, gera legendas com IA (Whisper), edita e publica no TikTok, tudo pela mesma janela.
 
 ## ✨ Funcionalidades
 
-- ⚡ **Download Ultra-Robusto**: 7 estratégias de fallback automático
-- 🤖 **Transcrição com IA**: Whisper otimizado (GPU/CPU)
-- 📝 **Legendas Profissionais**: 12+ estilos pré-configurados (TikTok, Reels, YouTube)
-- 👀 **Preview em Tempo Real**: Visualize legendas instantaneamente (<50ms)
-- ✂️ **Edição Avançada**: Cortes automáticos, logos, efeitos
-- 🎨 **Editor Visual**: Personalize fontes, cores, posições com sliders
+| Aba | O que faz |
+|-----|-----------|
+| **Download** | Baixa vídeos do YouTube e de outros sites (yt-dlp) com fallback automático entre estratégias e marcador de texto opcional |
+| **Cortes Inteligentes** | Encontra os melhores trechos (cenas + energia do áudio) e exporta clips curtos |
+| **Legendas** | Transcreve com Whisper (GPU ou CPU) e queima legendas animadas, com preview em tempo real |
+| **Upload** | Publica ou agenda no TikTok com várias contas e navegadores |
+| **Editor** | Overlays de texto e imagem com tempo, e compilações ("Adivinhe a Música", rankings) |
 
-## 🚀 Instalação
+Vem com 12 estilos de legenda: TikTok Classic, TikTok Bold, Instagram Reels, YouTube Shorts, Clean Minimal, Neon Glow, Bold Impact, Gradient Wave, Outline Style, Shadow Pop, Typewriter e Karaoke Style.
 
-### Requisitos
+## 📥 Para usuários
 
-- Python 3.10+
-- FFmpeg instalado no sistema
-- (Opcional) CUDA para transcrição acelerada
+1. Baixe o `DarkAgentLauncher.exe` em **[Releases](https://github.com/guimileib/Dark-Agent/releases/latest)**.
+2. Coloque-o em uma pasta própria (ex.: `Documentos\DarkAgent`). O app cria `logs/`, `cache/` e `output/` ao lado do arquivo.
+3. Abra o arquivo. Se o Windows SmartScreen avisar, clique em **Mais informações → Executar assim mesmo**.
+4. Na primeira execução, aceite baixar o FFmpeg.
 
-### Passos
+> A primeira abertura pode levar 1–2 minutos, porque o executável se descompacta. Só pode haver uma janela aberta por vez: um segundo clique avisa que o app já está aberto.
+
+**Atualizações são automáticas:** ao abrir, o app consulta a última Release e oferece instalar a versão nova.
+
+## 🛠️ Desenvolvimento
+
+Requisitos: Windows, Python 3.11 e Git.
 
 ```bash
-# 1. Clone o repositório
 git clone https://github.com/guimileib/Dark-Agent.git
 cd Dark-Agent
-
-# 2. Crie ambiente virtual
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
+venv\Scripts\activate
 
-# 3. Instale dependências
+# PyTorch primeiro (CPU; para GPU use o índice CUDA do pytorch.org)
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 
-# 4. Configure variáveis (opcional)
-copy .env.example .env
-# Edite .env com suas preferências
-
-# 5. Execute
+copy .env.example .env   # opcional
 python -m src.main
 ```
 
-## 📦 Gerar o Launcher (.exe)
-
-O executável distribuído é o `DarkAgentLauncher.exe`, gerado **sempre** a partir
-do `DarkAgentLauncher.spec` (nunca use `pyinstaller --onefile src/main.py` — o
-`.spec` contém `pathex`, `collect_submodules` e `hiddenimports` obrigatórios;
-sem eles o bundle sai incompleto e quebra com `ModuleNotFoundError`).
-
-### Build local (para testar)
+Checagens e testes (os mesmos do CI):
 
 ```bash
-# Com o venv ativado e dependências instaladas:
-pip install pyinstaller
-pyinstaller DarkAgentLauncher.spec --clean --noconfirm
-
-# Artefato final:
-dist\DarkAgentLauncher.exe
+python scripts/check_structure.py --imports
+pytest tests/
 ```
 
-### Release oficial (com auto-update)
-
-O build de release é feito pelo GitHub Actions (`.github/workflows/release.yml`).
-**Importante:** merge para `main` NÃO publica release — só o push de tag publica.
+## 📦 Gerar o .exe
 
 ```bash
-# 1. Suba a versão em src/__init__.py (ex.: 2.0.1 -> 2.0.2)
-#    __version__ = "2.0.2"
-
-# 2. Commit e push
-git add src/__init__.py
-git commit -m "chore: bump version 2.0.1 -> 2.0.2"
-git push
-
-# 3. Crie e envie a tag (dispara o workflow: pytest -> build -> release)
-git tag v2.0.2
-git push origin v2.0.2
+build_exe.bat
 ```
 
-O workflow roda os testes, gera o `.exe` e publica em **Releases** com o asset
-`DarkAgentLauncher.exe`. Alternativa sem terminal: aba *Actions* → workflow
-*Build and Release Windows Executable* → *Run workflow* → informe a tag.
+O arquivo sai em `dist\DarkAgentLauncher.exe`. Para enviar a alguém, mande **só o `.exe`**: as pastas ao lado dele em `dist\` contêm cookies e chaves suas.
 
-### Como o auto-update funciona
+O build usa sempre o `DarkAgentLauncher.spec`, que tem `pathex`, `collect_submodules` e a inclusão do yt-dlp. Sem ele o `.exe` sai incompleto.
 
-Ao abrir, o app consulta a release mais recente em
-`github.com/guimileib/Dark-Agent/releases` e compara a tag com o
-`__version__` embutido no `.exe`. Se a release for mais nova, oferece baixar e
-aplicar. Ou seja: **o update só chega para os usuários depois de publicar uma
-tag nova com `__version__` maior** — commits na `main` sozinhos não geram
-atualização. Falhas na checagem ficam registradas em `logs/`.
+## 🚀 Publicar uma versão
 
-## 📖 Como Usar
+O workflow `.github/workflows/ci.yml` funciona assim:
 
-1. **Cole o link do YouTube** na barra superior
-2. **Escolha a qualidade** do vídeo (720p recomendado)
-3. **Selecione o modelo IA** (Base = melhor custo-benefício)
-4. **Escolha um estilo de legenda** ou personalize
-5. **Visualize o preview** em tempo real
-6. **Clique em Processar** e aguarde!
+| Evento | O que roda |
+|--------|-----------|
+| PR para `main` | Checagem estrutural, imports e pytest |
+| Push na `main` | O mesmo; se `__version__` ainda não tiver tag, gera o `.exe` e publica a Release |
+| Push de tag `vX.Y.Z` | O mesmo, e publica a Release (a tag precisa ser igual a `__version__`) |
 
-## 🎨 Estilos de Legendas
+Para entregar uma atualização:
 
-- **TikTok Classic**: Palavra destacada amarela
-- **Instagram Reels**: Palavra centralizada bold
-- **YouTube Shorts**: Frases embaixo
-- **Clean Minimal**: Branco simples
-- **Neon Glow**: Efeito brilho colorido
-- E mais 7 estilos!
+```bash
+# 1. Suba __version__ em src/__init__.py (ex.: 2.0.3 -> 2.0.4)
+# 2. Faça merge/push na main
+```
 
-## 🛠️ Tecnologias
+Os usuários recebem a nova versão na próxima vez que abrirem o app. Sem aumentar a versão, o push só roda o CI. O repositório precisa ser público, porque a checagem de atualização é anônima.
 
-- **PyQt6**: Interface gráfica moderna
-- **yt-dlp**: Download robusto de vídeos
-- **OpenAI Whisper**: Transcrição com IA
-- **FFmpeg**: Processamento de vídeo
-- **PyTorch**: Aceleração GPU
+## 🧱 Estrutura
 
-## 📊 Performance
+```
+src/
+├── launcher.py   # entry point do .exe (splash, FFmpeg, instância única)
+├── main.py       # bootstrap da UI
+├── config/       # paths.py (fonte única de caminhos), settings.py
+├── models/       # EstiloLegenda, VideoMetadata, Overlay
+├── core/         # downloader, transcriber, video_editor, uploader, ...
+├── ui/           # main_window e widgets de cada aba
+└── utils/        # ffmpeg_utils, single_instance
+scripts/check_structure.py   # checagem estrutural usada no CI
+```
 
-| Operação | Tempo (vídeo 5min) |
-|----------|-------------------|
-| Download | < 60s |
-| Transcrição | < 30s |
-| Legendas | < 2s |
-| Render Final | < 120s |
+Docstrings: português, no máximo 3 linhas (resumo + porquê, se precisar). O CI reprova acima disso.
 
-## 📝 Licença
+## 🧰 Tecnologias
 
-MIT License - veja [LICENSE](LICENSE)
-
-## 🤝 Contribuindo
-
-Pull requests são bem-vindos! Para mudanças grandes, abra uma issue primeiro.
+PyQt6 · yt-dlp · OpenAI Whisper · PyTorch · FFmpeg · Selenium · PyInstaller
 
 ## 📧 Contato
 
 - Email: visualizepluss@gmail.com
-- Website: https://visualizeplus.com    
-
----
-
-**Versão:** 2.0  
-**Última Atualização:**  02/12/2025
+- Website: https://visualizeplus.com

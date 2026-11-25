@@ -1,4 +1,4 @@
-"""Data models for the video overlay editor."""
+"""Modelos de dados do editor de overlays."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Literal
 
 @dataclass
 class OverlayElemento:
-    """A single overlay element (text or image) placed on a video with timing."""
+    """Um overlay (texto ou imagem) posicionado no vídeo, com tempo de início e fim."""
 
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     tipo: Literal["texto", "imagem"] = "texto"
@@ -95,7 +95,7 @@ class OverlayElemento:
 
 @dataclass
 class OverlayTemplate:
-    """A reusable collection of overlay elements."""
+    """Coleção reutilizável de overlays."""
 
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     nome: str = "Novo Template"

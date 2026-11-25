@@ -1,9 +1,4 @@
-"""Widget de compilação — monta vídeos "Adivinhe a Música" / rankings.
-
-Fluxo: usuário adiciona 2–5 clipes (um por música / momento), define rótulo
-opcional por clipe, escolhe o PNG do canal e a transição; o widget junta
-tudo via core.compilation e salva em output/final.
-"""
+"""Aba de compilação: 2–5 clipes com rótulo, logo e transição, montados via core.compilation em output/final."""
 
 from datetime import datetime
 from pathlib import Path
@@ -86,7 +81,7 @@ class CompilationWidget(QWidget):
             f"Adicione de {MIN_CLIPES} a {MAX_CLIPES} vídeos (3 a 5 recomendado) — "
             "um por música ou momento. A ordem da lista é a ordem no vídeo final."
         )
-        subtitulo.setStyleSheet("color: #64748b; font-size: 12px;")
+        subtitulo.setStyleSheet("color: #71717a; font-size: 12px;")
         subtitulo.setWordWrap(True)
         left_lay.addWidget(subtitulo)
 
@@ -94,7 +89,7 @@ class CompilationWidget(QWidget):
         self.clip_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.clip_list.setStyleSheet("""
             QListWidget {
-                background-color: rgba(10, 15, 30, 0.9);
+                background-color: rgba(12, 12, 14, 0.9);
                 border: 1px solid rgba(59, 130, 246, 0.25);
                 border-radius: 10px;
                 color: white;
@@ -215,22 +210,7 @@ class CompilationWidget(QWidget):
         self.btn_montar = QPushButton("🎬  Montar Compilação")
         self.btn_montar.setMinimumHeight(48)
         self.btn_montar.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_montar.setStyleSheet("""
-            QPushButton {
-                font-size: 14px;
-                font-weight: bold;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #7c3aed, stop:1 #3b82f6);
-                color: white;
-                border: none;
-                border-radius: 12px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #6d28d9, stop:1 #2563eb);
-            }
-            QPushButton:disabled { background: #334155; color: #64748b; }
-        """)
+        self.btn_montar.setObjectName("CtaButton")
         self.btn_montar.clicked.connect(self._montar)
         right_lay.addWidget(self.btn_montar)
 
@@ -240,7 +220,7 @@ class CompilationWidget(QWidget):
         right_lay.addWidget(self.progress)
 
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self.status_label.setStyleSheet("color: #a1a1aa; font-size: 11px;")
         self.status_label.setWordWrap(True)
         right_lay.addWidget(self.status_label)
 
@@ -282,7 +262,7 @@ class CompilationWidget(QWidget):
             item = QListWidgetItem()
             item.setData(_PATH_ROLE, caminho)
             item.setData(_ROTULO_ROLE, "")
-            item.setForeground(QColor("#e2e8f0"))
+            item.setForeground(QColor("#e4e4e7"))
             self.clip_list.addItem(item)
         if len(caminhos) > vagas:
             QMessageBox.information(

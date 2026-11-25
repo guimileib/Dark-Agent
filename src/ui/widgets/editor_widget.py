@@ -1,4 +1,4 @@
-"""Editor Widget — overlay editor for placing text/images on video with timing."""
+"""Aba Editor: posiciona textos/imagens no vídeo com tempo de início e fim."""
 
 from __future__ import annotations
 
@@ -132,7 +132,7 @@ class EditorWidget(QWidget):
         vid_row = QHBoxLayout()
         vid_row.setSpacing(8)
         self._lbl_video = QLabel("Nenhum video selecionado")
-        self._lbl_video.setStyleSheet("color: #64748b; font-size: 12px; background: transparent;")
+        self._lbl_video.setStyleSheet("color: #71717a; font-size: 12px; background: transparent;")
         self._lbl_video.setWordWrap(True)
         vid_row.addWidget(self._lbl_video, 1)
         btn_browse = QPushButton("Selecionar")
@@ -252,10 +252,10 @@ class EditorWidget(QWidget):
         self._preview_canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_canvas.setStyleSheet("""
             QLabel {
-                background: rgba(15, 23, 42, 0.6);
+                background: rgba(9, 9, 11, 0.6);
                 border-radius: 14px;
                 border: 1.5px solid rgba(59, 130, 246, 0.2);
-                color: #64748b;
+                color: #71717a;
                 font-size: 13px;
             }
         """)
@@ -381,7 +381,7 @@ class EditorWidget(QWidget):
 
         row_img = QHBoxLayout()
         self._lbl_img_path = QLabel("Nenhuma imagem")
-        self._lbl_img_path.setStyleSheet("color: #64748b; font-size: 12px; background: transparent;")
+        self._lbl_img_path.setStyleSheet("color: #71717a; font-size: 12px; background: transparent;")
         row_img.addWidget(self._lbl_img_path, 1)
         btn_browse_img = QPushButton("Selecionar Imagem")
         btn_browse_img.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -405,7 +405,7 @@ class EditorWidget(QWidget):
         row_img2.addWidget(self._slider_opacity)
         self._lbl_opacity_val = QLabel("100%")
         self._lbl_opacity_val.setFixedWidth(40)
-        self._lbl_opacity_val.setStyleSheet("color: #94a3b8; font-size: 12px; background: transparent;")
+        self._lbl_opacity_val.setStyleSheet("color: #a1a1aa; font-size: 12px; background: transparent;")
         row_img2.addWidget(self._lbl_opacity_val)
         gi.addLayout(row_img2)
 
@@ -426,7 +426,7 @@ class EditorWidget(QWidget):
 
         self._lbl_status = QLabel("")
         self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._lbl_status.setStyleSheet("color: #94a3b8; font-size: 12px; background: transparent;")
+        self._lbl_status.setStyleSheet("color: #a1a1aa; font-size: 12px; background: transparent;")
         right_lay.addWidget(self._lbl_status)
 
         right_lay.addStretch()
@@ -453,9 +453,9 @@ class EditorWidget(QWidget):
 
         _style = """
             QPushButton {
-                background: rgba(15, 23, 42, 0.6);
-                color: #94a3b8;
-                border: 1.5px solid rgba(51, 65, 85, 0.5);
+                background: rgba(9, 9, 11, 0.6);
+                color: #a1a1aa;
+                border: 1.5px solid rgba(39, 39, 42, 0.5);
                 border-radius: 8px;
                 font-size: 11px;
                 font-weight: 700;
@@ -464,7 +464,7 @@ class EditorWidget(QWidget):
             QPushButton:hover {
                 background: rgba(59, 130, 246, 0.15);
                 border-color: rgba(59, 130, 246, 0.4);
-                color: #e2e8f0;
+                color: #e4e4e7;
             }
             QPushButton:checked {
                 background: rgba(59, 130, 246, 0.25);
@@ -512,7 +512,7 @@ class EditorWidget(QWidget):
     @staticmethod
     def _lbl(text: str) -> QLabel:
         l = QLabel(text)
-        l.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 600; background: transparent;")
+        l.setStyleSheet("color: #a1a1aa; font-size: 12px; font-weight: 600; background: transparent;")
         return l
 
     @staticmethod
@@ -530,11 +530,11 @@ class EditorWidget(QWidget):
     def _btn_secondary_style() -> str:
         return """
             QPushButton {
-                background: rgba(15,23,42,0.5); color: #94a3b8;
-                border: 1.5px solid rgba(51,65,85,0.5); border-radius: 10px;
+                background: rgba(9, 9, 11,0.5); color: #a1a1aa;
+                border: 1.5px solid rgba(39, 39, 42,0.5); border-radius: 10px;
                 padding: 8px 14px; font-size: 12px; font-weight: 600;
             }
-            QPushButton:hover { background: rgba(51,65,85,0.5); color: #e2e8f0; border-color: rgba(59,130,246,0.3); }
+            QPushButton:hover { background: rgba(39, 39, 42,0.5); color: #e4e4e7; border-color: rgba(59,130,246,0.3); }
         """
 
     @staticmethod
@@ -610,7 +610,7 @@ class EditorWidget(QWidget):
         self._request_frame_preview()
 
     def _load_props(self, elem: OverlayElemento):
-        """Populate the property form from an OverlayElemento."""
+        """Preenche o formulário de propriedades a partir de um OverlayElemento."""
         self._updating_ui = True
 
         self._combo_type.setCurrentText("Texto" if elem.tipo == "texto" else "Imagem")
@@ -651,7 +651,7 @@ class EditorWidget(QWidget):
         self._updating_ui = False
 
     def _on_prop_changed(self, *_):
-        """Write current form values back into the selected element."""
+        """Grava os valores do formulário no elemento selecionado."""
         if self._updating_ui or self._current_idx < 0:
             return
         elem = self._elementos[self._current_idx]

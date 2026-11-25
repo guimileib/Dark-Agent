@@ -4,18 +4,23 @@ import sys
 from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QPushButton,
-    QProgressBar, QLabel, QMessageBox, QTabWidget, QApplication,
-    QScrollArea, QFrame
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QProgressBar, QLabel, QMessageBox, QApplication,
+    QScrollArea, QFrame, QStackedWidget
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 
 from config.settings import settings
 from config.paths import APP_DIR, output_subdir, OUTPUT_RAW, OUTPUT_FINAL, OUTPUT_TEMP, OUTPUT_CLIPS
 from ui.widgets import (
     DownloadWidget, SubtitleWidget, ClipWidget, UploadWidget, EditorWidget,
-    CompilationWidget,
+    CompilationWidget, Top5Widget,
+)
+from ui import icons
+from ui.command_palette import CommandPalette
+from ui.widgets.sidebar import (
+    SidebarNav, NavGroupData, NavItemData, flatten, SIDEBAR_WIDTH,
 )
 from core import (
     VideoDownloader, VideoValidator, Transcriber,
@@ -181,10 +186,7 @@ class ProcessadorThread(QThread):
                 video_progress_chunk = 100 / total_videos
 
                 def report_progress(msg, step_percent, _start=video_progress_start, _chunk=video_progress_chunk, _idx=i):
-                    """
-                    step_percent: 0-100 relative to this video
-                    global_percent: 0-100 absolute
-                    """
+                    """step_percent: 0–100 relativo a este vídeo."""
                     current_chunk_progress = (step_percent / 100) * _chunk
                     global_percent = int(_start + current_chunk_progress)
                     # Clamp to 100
@@ -401,11 +403,7 @@ class BatchDownloadThread(QThread):
 
     @staticmethod
     def _aplicar_marcador(video_path: Path, marker: dict, base_out: Path) -> Optional[Path]:
-        """Queima o marcador, escrevendo em final/ e descartando o raw original.
-
-        Quando há marcador, o arquivo deixa de ser "raw" — vai pra final/ e o
-        download bruto é removido pra não duplicar storage.
-        """
+        """Queima o marcador gravando em final/ e apaga o raw (evita duplicar storage)."""
         editor = VideoEditor()
         final_dir = output_subdir(base_out, OUTPUT_FINAL)
         out_path = final_dir / f"{video_path.stem}_marked.mp4"
@@ -504,10 +502,9 @@ class MainWindow(QMainWindow):
             self.aplicar_atualizacao(tag, download_url)
 
     def aplicar_atualizacao(self, tag: str, download_url: str):
-        """Baixa o novo .exe da Release e usa um helper .bat para substituir e relançar.
+        """Baixa o .exe da Release e troca o binário via .bat auxiliar.
 
-        Em modo dev (rodando do código-fonte), apenas informa o usuário —
-        o auto-update binário só faz sentido para o .exe distribuído.
+        Em dev (código-fonte) só avisa o usuário.
         """
         if not getattr(sys, "frozen", False):
             QMessageBox.information(
@@ -622,12 +619,12 @@ class MainWindow(QMainWindow):
         # Estilo para garantir visibilidade
         msg_box.setStyleSheet("""
             QMessageBox {
-                background-color: #1e293b;
-                color: #e2e8f0;
+                background-color: #18181b;
+                color: #e4e4e7;
                 border-radius: 16px;
             }
             QLabel {
-                color: #e2e8f0;
+                color: #e4e4e7;
                 font-size: 14px;
             }
             QPushButton {
@@ -667,127 +664,155 @@ class MainWindow(QMainWindow):
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
         
-        # Widget central
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        layout = QVBoxLayout()
-        layout.setSpacing(12)
-        layout.setContentsMargins(16, 8, 16, 16)
-
-        # Header
-        header_container = QWidget()
-        header_container.setStyleSheet("background: transparent;")
-        header_layout = QVBoxLayout(header_container)
-        header_layout.setContentsMargins(0, 8, 0, 12)
-        header_layout.setSpacing(4)
-
-        titulo = QLabel(f"DarkAgent Pro")
-        titulo.setObjectName("HeaderTitle")
-        titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.addWidget(titulo)
-
-        subtitulo = QLabel(f"v{__version__}")
-        subtitulo.setObjectName("SubTitle")
-        subtitulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.addWidget(subtitulo)
-
-        layout.addWidget(header_container)
-        
-        # Criar TabWidget
-        self.tab_widget = QTabWidget()
-        # Styling is now handled by modern_theme.qss
-        
-        # Aba 1: Download — dentro de QScrollArea: se a janela ficar menor que
-        # o conteúdo, aparece scrollbar em vez de widgets se sobrepondo.
+        # Páginas (criadas antes da sidebar; o stack é indexado por id)
         self.download_widget = DownloadWidget()
         self.download_widget.download_video_apenas.connect(self.baixar_video_apenas)
         self.download_widget.download_e_legendar.connect(self.iniciar_fluxo_completo)
+        # QScrollArea: janela menor que o conteúdo => scrollbar, sem sobreposição.
         scroll_download = QScrollArea()
         scroll_download.setWidgetResizable(True)
         scroll_download.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_download.setStyleSheet("QScrollArea { background: transparent; }")
         scroll_download.setWidget(self.download_widget)
-        self.tab_widget.addTab(scroll_download, "Download")
-        
-        # Aba 2: Cortes Inteligentes  
-        tab_clips = QWidget()
-        layout_clips = QVBoxLayout(tab_clips)
+
         self.clip_widget = ClipWidget()
         self.clip_widget.clip_selecionado.connect(self.processar_clip)
-        layout_clips.addWidget(self.clip_widget)
-        self.tab_widget.addTab(tab_clips, "Cortes Inteligentes")
-        
-        # Aba 3: Legendas
-        tab_legendas = QWidget()
-        layout_legendas = QVBoxLayout(tab_legendas)
-        
-        # Preview Renderer
+
         self.preview_renderer = PreviewRenderer(canvas_size=(640, 360))
-        
-        # Subtitle Widget
         estilos = settings.get_todos_estilos()
         self.subtitle_widget = SubtitleWidget(estilos, self.preview_renderer)
-        layout_legendas.addWidget(self.subtitle_widget)
-        
-        self.tab_widget.addTab(tab_legendas, "Legendas")
-        
-        # Aba Upload
-        self.upload_widget = UploadWidget()
-        self.tab_widget.addTab(self.upload_widget, "Upload")
 
-        # Aba Editor: sub-abas Overlays (editor original) e Compilação
-        # (montador "Adivinhe a Música" / rankings para TikTok e Shorts)
+        self.upload_widget = UploadWidget()
         self.editor_widget = EditorWidget()
         self.compilation_widget = CompilationWidget()
-        editor_tabs = QTabWidget()
-        editor_tabs.addTab(self.editor_widget, "Overlays")
-        editor_tabs.addTab(self.compilation_widget, "Compilação")
-        self.tab_widget.addTab(editor_tabs, "Editor")
+        self.top5_widget = Top5Widget()
+        # NOTE: previews são gerados async por iniciar_geracao_previews() no
+        # __init__. Não chamar gerar_previews_iniciais() aqui (bloqueava o startup).
 
-        # NOTE: previews are generated asynchronously by iniciar_geracao_previews()
-        # in __init__. Do NOT call gerar_previews_iniciais() here (it was synchronous
-        # and duplicated the work, blocking the UI on startup).
+        self.nav_groups = [
+            NavGroupData(items=[
+                NavItemData("search", "Buscar", "search", shortcut="Ctrl K"),
+            ]),
+            NavGroupData(heading="Produção", items=[
+                NavItemData("download", "Download", "download"),
+                NavItemData("clips", "Cortes Inteligentes", "scissors"),
+                NavItemData("legendas", "Legendas", "captions"),
+                NavItemData("upload", "Upload", "upload"),
+            ]),
+            NavGroupData(heading="Edição", items=[
+                NavItemData("editor", "Editor", "film", children=[
+                    NavItemData("overlays", "Overlays", "layers"),
+                    NavItemData("compilacao", "Compilação", "list-video"),
+                    NavItemData("top5", "Top 5", "list-ordered"),
+                ]),
+            ]),
+        ]
+        self.nav_bottom = [
+            NavItemData("tutorial", "Tutorial", "book-open"),
+            NavItemData("updates", "Verificar atualizações", "refresh-cw"),
+        ]
+        self.pages: dict[str, QWidget] = {
+            "download": scroll_download,
+            "clips": self.clip_widget,
+            "legendas": self.subtitle_widget,
+            "upload": self.upload_widget,
+            "overlays": self.editor_widget,
+            "compilacao": self.compilation_widget,
+            "top5": self.top5_widget,
+        }
 
-        layout.addWidget(self.tab_widget)
-        
-        # Botão processar
-        self.btn_processar = QPushButton("PROCESSAR COM LEGENDAS")
+        # Shell: sidebar | (topbar / conteúdo / rodapé de ações)
+        central_widget = QWidget()
+        central_widget.setObjectName("AppShell")
+        self.setCentralWidget(central_widget)
+        shell = QHBoxLayout(central_widget)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+
+        self.sidebar = SidebarNav(self.nav_groups, self.nav_bottom,
+                                  "DarkAgent Pro", f"v{__version__}")
+        self.sidebar.selected.connect(self._on_nav_selected)
+        self.sidebar.setMinimumWidth(0)
+        self.sidebar.setMaximumWidth(SIDEBAR_WIDTH)
+        shell.addWidget(self.sidebar)
+        self._sidebar_anim = QPropertyAnimation(self.sidebar, b"maximumWidth", self)
+        self._sidebar_anim.setDuration(260)
+        self._sidebar_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._sidebar_open = True
+
+        main = QFrame()
+        main.setObjectName("MainArea")
+        main_l = QVBoxLayout(main)
+        main_l.setContentsMargins(0, 0, 0, 0)
+        main_l.setSpacing(0)
+        main_l.addWidget(self._build_topbar())
+
+        content = QWidget()
+        content.setObjectName("ContentArea")
+        layout = QVBoxLayout(content)
+        layout.setSpacing(12)
+        layout.setContentsMargins(24, 20, 24, 16)
+
+        self.stack = QStackedWidget()
+        for page in self.pages.values():
+            self.stack.addWidget(page)
+        layout.addWidget(self.stack, 1)
+
+        self.btn_processar = QPushButton("Processar legendas")
         self.btn_processar.setObjectName("ProcessButton")
-        self.btn_processar.setMinimumHeight(54)
+        self.btn_processar.setMinimumHeight(38)
         self.btn_processar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_processar.clicked.connect(self.processar_video)
-        layout.addWidget(self.btn_processar)
-        
-        # Controle de visibilidade por aba
-        self.tab_widget.currentChanged.connect(self.on_tab_changed)
-        self.btn_processar.setVisible(False)  # Download é a primeira aba
-        
-        # Barra de progresso
+        # Vive no rodapé do painel "Detalhes" da página de Legendas.
+        self.subtitle_widget.set_action_button(self.btn_processar)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
         self.progress_bar.setMaximum(100)
+        self.progress_bar.setTextVisible(False)
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
-        
+
         self.status_label = QLabel("")
         self.status_label.setObjectName("StatusLabel")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
-        
-        central_widget.setLayout(layout)
 
-        # Tamanho mínimo e padrão — permite redimensionamento livre
-        self.setMinimumSize(850, 650)
-        self.resize(1300, 820)
+        main_l.addWidget(content, 1)
+        shell.addWidget(main, 1)
 
-        # Centralizar na tela
+        # Paleta de comandos (Ctrl+K)
+        entries = []
+        for it in flatten([i for g in self.nav_groups for i in g.items] + self.nav_bottom):
+            if it.id == "search" or it.children:
+                continue
+            entries.append((it.id, it.title, it.icon, self._nav_path(it.id)))
+        self.palette = CommandPalette(central_widget, entries)
+        self.palette.chosen.connect(self._on_nav_selected)
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=self.palette.open_palette)
+        QShortcut(QKeySequence("Ctrl+B"), self, activated=self.toggle_sidebar)
+
+        # Badge "•••" nos itens com thread rodando
+        self._badge_timer = QTimer(self)
+        self._badge_timer.timeout.connect(self._refresh_nav_badges)
+        self._badge_timer.start(800)
+
+        self.current_page = ""
+        self.show_page("download")
+
+        # Tamanho adaptado à área útil da tela (sem a barra de tarefas)
         screen = self.screen()
         if screen:
-            screen_geometry = screen.availableGeometry()
-            x = (screen_geometry.width() - 1300) // 2 + screen_geometry.x()
-            y = (screen_geometry.height() - 820) // 2 + screen_geometry.y()
-            self.move(x, y)
+            avail = screen.availableGeometry()
+            frame_h = 40  # barra de título do Windows fica fora do resize()
+            w = min(1300, avail.width() - 16)
+            h = min(820, avail.height() - frame_h)
+            self.setMinimumSize(min(850, w), min(560, h))
+            self.resize(w, h)
+            self.move(avail.x() + (avail.width() - w) // 2,
+                      avail.y() + max(0, (avail.height() - h - frame_h) // 2))
+        else:
+            self.setMinimumSize(850, 560)
+            self.resize(1300, 820)
     
     def aplicar_tema(self):
         """Aplica tema escuro moderno"""
@@ -803,15 +828,113 @@ class MainWindow(QMainWindow):
             logger.warning(f"Tema não encontrado em: {tema_path}")
     
     
-    def on_tab_changed(self, index):
-        """Atualiza visibilidade de widgets conforme a aba selecionada"""
-        nome_aba = self.tab_widget.tabText(index)
-        # Mostrar botão de processar apenas na aba 'Legendas'
-        self.btn_processar.setVisible(nome_aba == "Legendas")
-        
-        # Se mudou para a aba Legendas, atualizar lista de vídeos
-        if nome_aba == "Legendas":
+    # ── Navegação ────────────────────────────────────────────────────────────
+    def _build_topbar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("TopBar")
+        bar.setFixedHeight(56)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(16, 0, 16, 0)
+        lay.setSpacing(10)
+
+        self.btn_toggle_sidebar = QPushButton()
+        self.btn_toggle_sidebar.setObjectName("GhostIconButton")
+        self.btn_toggle_sidebar.setIconSize(QSize(18, 18))
+        self.btn_toggle_sidebar.setIcon(icons.icon("panel-left-close", "#a1a1aa", 18))
+        self.btn_toggle_sidebar.setToolTip("Recolher sidebar (Ctrl+B)")
+        self.btn_toggle_sidebar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_sidebar.clicked.connect(self.toggle_sidebar)
+        lay.addWidget(self.btn_toggle_sidebar)
+
+        self.crumb_root = QLabel("DarkAgent Pro")
+        self.crumb_root.setObjectName("CrumbMuted")
+        sep = QLabel("/")
+        sep.setObjectName("CrumbMuted")
+        self.crumb_mid = QLabel("")
+        self.crumb_mid.setObjectName("CrumbMuted")
+        self.crumb_sep2 = QLabel("/")
+        self.crumb_sep2.setObjectName("CrumbMuted")
+        self.crumb_current = QLabel("")
+        self.crumb_current.setObjectName("CrumbCurrent")
+        for w in (self.crumb_root, sep, self.crumb_mid, self.crumb_sep2, self.crumb_current):
+            lay.addWidget(w)
+        lay.addStretch(1)
+
+        search = QPushButton("Buscar...")
+        search.setObjectName("SearchTrigger")
+        search.setIcon(icons.icon("search", "#71717a", 14))
+        search.setIconSize(QSize(14, 14))
+        search.setCursor(Qt.CursorShape.PointingHandCursor)
+        search.setFixedWidth(240)
+        search.clicked.connect(lambda: self.palette.open_palette())
+        lay.addWidget(search)
+        return bar
+
+    def _nav_path(self, item_id: str) -> str:
+        """Breadcrumb textual do item (ex.: 'Editor / Top 5')."""
+        for g in self.nav_groups:
+            for it in g.items:
+                if it.id == item_id:
+                    return it.title
+                for c in it.children:
+                    if c.id == item_id:
+                        return f"{it.title} / {c.title}"
+        for it in self.nav_bottom:
+            if it.id == item_id:
+                return it.title
+        return item_id
+
+    def _on_nav_selected(self, item_id: str):
+        if item_id == "search":
+            self.palette.open_palette()
+        elif item_id == "tutorial":
+            from ui.onboarding_dialog import OnboardingDialog
+            OnboardingDialog(self).exec()
+        elif item_id == "updates":
+            self.check_for_updates()
+            self.status_label.setText("Verificando atualizações...")
+            QTimer.singleShot(4000, self._limpar_status_update)
+        else:
+            self.show_page(item_id)
+
+    def _limpar_status_update(self):
+        if self.status_label.text().startswith("Verificando"):
+            self.status_label.setText("")
+
+    def show_page(self, page_id: str):
+        """Troca a página visível, o destaque da sidebar e o breadcrumb."""
+        page = self.pages.get(page_id)
+        if page is None:
+            return
+        self.current_page = page_id
+        self.stack.setCurrentWidget(page)
+        self.sidebar.set_active(page_id)
+        parts = self._nav_path(page_id).split(" / ")
+        has_mid = len(parts) > 1
+        self.crumb_mid.setText(parts[0] if has_mid else "")
+        self.crumb_mid.setVisible(has_mid)
+        self.crumb_sep2.setVisible(has_mid)
+        self.crumb_current.setText(parts[-1])
+
+        # Ao entrar em Legendas, atualiza a fila de vídeos
+        if page_id == "legendas":
             self.atualizar_lista_videos_para_processar()
+
+    def toggle_sidebar(self):
+        aberta = self._sidebar_open
+        self._sidebar_open = not aberta
+        self._sidebar_anim.stop()
+        self._sidebar_anim.setStartValue(self.sidebar.width())
+        self._sidebar_anim.setEndValue(0 if aberta else SIDEBAR_WIDTH)
+        self._sidebar_anim.start()
+        nome = "panel-left-open" if aberta else "panel-left-close"
+        self.btn_toggle_sidebar.setIcon(icons.icon(nome, "#a1a1aa", 18))
+        acao = "Expandir" if aberta else "Recolher"
+        self.btn_toggle_sidebar.setToolTip(f"{acao} sidebar (Ctrl+B)")
+
+    def _refresh_nav_badges(self):
+        for kind in ("download", "legendas"):
+            self.sidebar.set_badge(kind, "•••" if self._is_kind_running(kind) else None)
 
     def atualizar_lista_videos_para_processar(self):
         """Coleta vídeos das abas Upload e Download e atualiza lista na aba Legendas"""
@@ -848,11 +971,7 @@ class MainWindow(QMainWindow):
         return self.thread_preview is not None and self.thread_preview.isRunning()
 
     def _maybe_hide_progress(self):
-        """Esconde a barra global apenas se nenhuma operação estiver ativa.
-
-        Com paralelismo, callbacks de uma operação não podem esconder a barra
-        unilateralmente — outra pode ainda estar rodando.
-        """
+        """Esconde a barra global só se nenhuma operação estiver ativa (há operações em paralelo)."""
         if (not any(t is not None and t.isRunning() for t in self.threads.values())
                 and not self._is_preview_thread_running()):
             self.progress_bar.setRange(0, 100)  # restaura modo determinado
@@ -906,10 +1025,9 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def atualizar_progresso(self, mensagem: str, percentual: int):
-        """Atualiza barra de progresso do processamento (prioridade sobre preview).
+        """Atualiza a barra de progresso (prioridade sobre o preview).
 
-        Com múltiplos kinds ativos, troca pra modo indeterminado pra evitar a
-        barra ficar pulando entre os percentuais conflitantes de cada operação.
+        Com várias operações ativas, vira indeterminada em vez de pular entre percentuais.
         """
         self.status_label.setText(mensagem)
         active_kinds = sum(1 for t in self.threads.values() if t is not None and t.isRunning())

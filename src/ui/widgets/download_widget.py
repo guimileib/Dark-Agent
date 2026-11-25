@@ -47,7 +47,7 @@ class DownloadWidget(QWidget):
         container_layout.addWidget(url_label)
 
         url_subtitle = QLabel("Digite o link e pressione Enter para adicionar à fila")
-        url_subtitle.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 4px;")
+        url_subtitle.setStyleSheet("color: #71717a; font-size: 12px; margin-bottom: 4px;")
         container_layout.addWidget(url_subtitle)
 
         # ── Campo de entrada (URL única, Enter adiciona) ─────────────────
@@ -59,7 +59,7 @@ class DownloadWidget(QWidget):
         self.url_entry.setMinimumHeight(40)
         self.url_entry.setStyleSheet("""
             QLineEdit {
-                background-color: rgba(15, 23, 42, 0.8);
+                background-color: rgba(9, 9, 11, 0.8);
                 color: white;
                 border: 1px solid rgba(59, 130, 246, 0.4);
                 border-radius: 10px;
@@ -68,7 +68,7 @@ class DownloadWidget(QWidget):
             }
             QLineEdit:focus {
                 border: 1px solid #3b82f6;
-                background-color: rgba(15, 23, 42, 0.95);
+                background-color: rgba(9, 9, 11, 0.95);
             }
         """)
         self.url_entry.returnPressed.connect(self._add_url_from_entry)
@@ -98,7 +98,7 @@ class DownloadWidget(QWidget):
         # ── Lista de URLs com checkbox ────────────────────────────────────
         list_header = QHBoxLayout()
         lbl_fila = QLabel("Fila de Downloads")
-        lbl_fila.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: bold;")
+        lbl_fila.setStyleSheet("color: #a1a1aa; font-size: 12px; font-weight: bold;")
         list_header.addWidget(lbl_fila)
         list_header.addStretch()
 
@@ -124,14 +124,14 @@ class DownloadWidget(QWidget):
         self.btn_remove_url.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_remove_url.setStyleSheet("""
             QPushButton {
-                background-color: rgba(100,116,139,0.15);
-                color: #94a3b8;
-                border: 1px solid rgba(100,116,139,0.3);
+                background-color: rgba(113, 113, 122,0.15);
+                color: #a1a1aa;
+                border: 1px solid rgba(113, 113, 122,0.3);
                 border-radius: 6px;
                 padding: 0 10px;
                 font-size: 11px;
             }
-            QPushButton:hover { background-color: rgba(100,116,139,0.3); }
+            QPushButton:hover { background-color: rgba(113, 113, 122,0.3); }
         """)
         self.btn_remove_url.clicked.connect(self._remove_selected_urls)
         list_header.addWidget(self.btn_remove_url)
@@ -145,7 +145,7 @@ class DownloadWidget(QWidget):
         self.url_list.setFixedHeight(150)
         self.url_list.setStyleSheet("""
             QListWidget {
-                background-color: rgba(10, 15, 30, 0.9);
+                background-color: rgba(12, 12, 14, 0.9);
                 border: 1px solid rgba(59, 130, 246, 0.25);
                 border-radius: 10px;
                 color: white;
@@ -172,15 +172,15 @@ class DownloadWidget(QWidget):
                 border: 1px solid #60a5fa;
             }
             QListWidget::indicator:unchecked {
-                background-color: rgba(20,30,50,0.9);
-                border: 1px solid rgba(100,116,139,0.5);
+                background-color: rgba(24, 24, 27,0.9);
+                border: 1px solid rgba(113, 113, 122,0.5);
             }
         """)
 
         # Placeholder quando vazio
         self._empty_item = QListWidgetItem("  Nenhum link adicionado ainda...")
         self._empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
-        self._empty_item.setForeground(QColor("#475569"))
+        self._empty_item.setForeground(QColor("#3f3f46"))
         self.url_list.addItem(self._empty_item)
 
         container_layout.addWidget(self.url_list)
@@ -237,7 +237,7 @@ class DownloadWidget(QWidget):
         container_layout.addWidget(marker_label)
 
         self.marker_status_label = QLabel("Selecione um vídeo da fila para configurar seu marcador.")
-        self.marker_status_label.setStyleSheet("color: #94a3b8; font-size: 11px; font-style: italic; margin-bottom: 2px;")
+        self.marker_status_label.setStyleSheet("color: #a1a1aa; font-size: 11px; font-style: italic; margin-bottom: 2px;")
         container_layout.addWidget(self.marker_status_label)
 
         marker_row = QHBoxLayout()
@@ -249,7 +249,7 @@ class DownloadWidget(QWidget):
         self.marker_entry.setEnabled(False)
         self.marker_entry.setStyleSheet("""
             QLineEdit {
-                background-color: rgba(15, 23, 42, 0.8);
+                background-color: rgba(9, 9, 11, 0.8);
                 color: white;
                 border: 1px solid rgba(59, 130, 246, 0.4);
                 border-radius: 10px;
@@ -258,7 +258,7 @@ class DownloadWidget(QWidget):
             }
             QLineEdit:focus {
                 border: 1px solid #3b82f6;
-                background-color: rgba(15, 23, 42, 0.95);
+                background-color: rgba(9, 9, 11, 0.95);
             }
         """)
         marker_row.addWidget(self.marker_entry, 2)
@@ -304,7 +304,7 @@ class DownloadWidget(QWidget):
                 color: white;
             }
             QPushButton:pressed { background-color: #3b82f6; color: white; }
-            QPushButton:disabled { opacity: 0.4; color: #64748b; }
+            QPushButton:disabled { opacity: 0.4; color: #71717a; }
         """)
         self.btn_baixar.clicked.connect(self.on_baixar_clicked)
         btn_row.addWidget(self.btn_baixar, 1)
@@ -313,26 +313,7 @@ class DownloadWidget(QWidget):
         self.btn_baixar_legendar = QPushButton("⚡  Baixar + Legendar")
         self.btn_baixar_legendar.setMinimumHeight(46)
         self.btn_baixar_legendar.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_baixar_legendar.setStyleSheet("""
-            QPushButton {
-                font-size: 14px;
-                font-weight: bold;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #7c3aed, stop:1 #3b82f6);
-                color: white;
-                border: none;
-                border-radius: 12px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #6d28d9, stop:1 #2563eb);
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #5b21b6, stop:1 #1d4ed8);
-            }
-            QPushButton:disabled { opacity: 0.4; }
-        """)
+        self.btn_baixar_legendar.setObjectName("CtaButton")
         self.btn_baixar_legendar.clicked.connect(self.on_baixar_legendar_clicked)
         btn_row.addWidget(self.btn_baixar_legendar, 2)
 
@@ -375,7 +356,7 @@ class DownloadWidget(QWidget):
         item.setCheckState(Qt.CheckState.Checked)
         item.setData(Qt.ItemDataRole.UserRole, url)
         item.setData(_MARKER_ROLE, None)
-        item.setForeground(QColor("#e2e8f0"))
+        item.setForeground(QColor("#e4e4e7"))
 
         self._refresh_item_display(item)
 
@@ -493,7 +474,7 @@ class DownloadWidget(QWidget):
         if self.url_list.count() == 0:
             self._empty_item = QListWidgetItem("  Nenhum link adicionado ainda...")
             self._empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
-            self._empty_item.setForeground(QColor("#475569"))
+            self._empty_item.setForeground(QColor("#3f3f46"))
             self.url_list.addItem(self._empty_item)
 
     def _get_checked_urls(self) -> list[str]:

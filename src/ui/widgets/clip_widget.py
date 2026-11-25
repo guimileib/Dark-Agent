@@ -112,7 +112,7 @@ class ClipItemWidget(QFrame):
         self.setObjectName("ClipItem")
         self.setStyleSheet("""
             QFrame#ClipItem {
-                background-color: rgba(15, 23, 42, 0.5);
+                background-color: rgba(9, 9, 11, 0.5);
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 16px;
                 margin-bottom: 6px;
@@ -161,7 +161,7 @@ class ClipItemWidget(QFrame):
         razoes_text = "\n".join([f"• {r}" for r in self.clip_data.get('razoes', [])])
         razoes_label = QLabel(razoes_text)
         razoes_label.setWordWrap(True)
-        razoes_label.setStyleSheet("color: #94a3b8; font-size: 12px; margin: 5px;")
+        razoes_label.setStyleSheet("color: #a1a1aa; font-size: 12px; margin: 5px;")
         layout.addWidget(razoes_label)
         
         # Botão de selecionar
@@ -197,8 +197,8 @@ class ClipItemWidget(QFrame):
                 border: none;
                 border-radius: 5px;
                 text-align: center;
-                background-color: rgba(15, 23, 42, 0.6);
-                color: #e2e8f0;
+                background-color: rgba(9, 9, 11, 0.6);
+                color: #e4e4e7;
                 font-weight: 600;
                 font-size: 11px;
                 max-height: 14px;
@@ -279,7 +279,7 @@ class ClipWidget(QWidget):
         video_layout.addLayout(video_controls)
         
         self.info_video = QLabel("Nenhum vídeo selecionado")
-        self.info_video.setStyleSheet("color: #94a3b8; font-style: italic;")
+        self.info_video.setStyleSheet("color: #a1a1aa; font-style: italic;")
         video_layout.addWidget(self.info_video)
         
         top_layout.addLayout(video_layout)
@@ -342,7 +342,7 @@ class ClipWidget(QWidget):
         self.check_todos.setStyleSheet(f"""
             QCheckBox {{
                 background-color: transparent;
-                color: #e2e8f0;
+                color: #e4e4e7;
                 font-size: 14px;
                 font-weight: bold;
                 spacing: 8px;
@@ -350,9 +350,9 @@ class ClipWidget(QWidget):
             QCheckBox::indicator {{
                 width: 22px;
                 height: 22px;
-                border: 2px solid #475569;
+                border: 2px solid #3f3f46;
                 border-radius: 6px;
-                background: rgba(30, 41, 59, 0.5);
+                background: rgba(24, 24, 27, 0.5);
             }}
             QCheckBox::indicator:hover {{
                 border-color: #3b82f6;
@@ -509,7 +509,7 @@ class ClipWidget(QWidget):
             self.qtd_clips_spin.setStyleSheet("""
                 QSpinBox {
                     color: transparent;
-                    background-color: rgba(30, 41, 59, 0.3);
+                    background-color: rgba(24, 24, 27, 0.3);
                     border: 1px solid rgba(255, 255, 255, 0.1);
                 }
             """)
@@ -784,5 +784,5 @@ class ClipWidget(QWidget):
         else:
             self.video_path = None
             self.info_video.setText("Nenhum vídeo selecionado")
-            self.info_video.setStyleSheet("color: #64748b; font-style: italic; margin: 5px;")
+            self.info_video.setStyleSheet("color: #71717a; font-style: italic; margin: 5px;")
             self.btn_analisar.setEnabled(False)

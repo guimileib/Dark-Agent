@@ -118,7 +118,7 @@ class OnboardingDialog(QDialog):
                 # Placeholder
                 lbl_placeholder = QLabel(f"[{image_name}]")
                 lbl_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lbl_placeholder.setStyleSheet("color: #64748b; font-size: 14px; border: 2px dashed rgba(51, 65, 85, 0.6); border-radius: 16px; padding: 24px; background: rgba(15, 23, 42, 0.3);")
+                lbl_placeholder.setStyleSheet("color: #71717a; font-size: 14px; border: 2px dashed rgba(39, 39, 42, 0.6); border-radius: 16px; padding: 24px; background: rgba(9, 9, 11, 0.3);")
                 layout.addWidget(lbl_placeholder)
         
         # Descrição
@@ -203,27 +203,27 @@ class OnboardingDialog(QDialog):
     def aplicar_estilo(self):
         self.setStyleSheet("""
             QDialog {
-                background-color: #0f172a;
-                color: #f0f4ff;
+                background-color: #09090b;
+                color: #fafafa;
             }
             QLabel#SlideTitle {
                 font-size: 28px;
                 font-weight: 800;
-                color: #f8fafc;
+                color: #fafafa;
                 letter-spacing: -0.3px;
                 margin-bottom: 16px;
             }
             QLabel#SlideDesc {
                 font-size: 15px;
-                color: #cbd5e1;
+                color: #d4d4d8;
                 line-height: 1.6;
             }
             QFrame#NavBar {
-                background-color: rgba(8, 12, 22, 0.9);
-                border-top: 1px solid rgba(51, 65, 85, 0.4);
+                background-color: rgba(9, 9, 11, 0.9);
+                border-top: 1px solid rgba(39, 39, 42, 0.4);
             }
             QLabel#PageIndicator {
-                color: #64748b;
+                color: #71717a;
                 font-weight: 700;
                 font-size: 12px;
             }
@@ -246,16 +246,16 @@ class OnboardingDialog(QDialog):
             }
             QPushButton#BtnSecondary {
                 background-color: transparent;
-                color: #94a3b8;
-                border: 1.5px solid rgba(51, 65, 85, 0.6);
+                color: #a1a1aa;
+                border: 1.5px solid rgba(39, 39, 42, 0.6);
                 padding: 11px 22px;
                 border-radius: 12px;
                 font-weight: 600;
                 font-size: 13px;
             }
             QPushButton#BtnSecondary:hover {
-                background-color: rgba(51, 65, 85, 0.4);
-                color: #e2e8f0;
+                background-color: rgba(39, 39, 42, 0.4);
+                color: #e4e4e7;
                 border-color: rgba(59, 130, 246, 0.3);
             }
         """)

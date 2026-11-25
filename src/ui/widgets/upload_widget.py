@@ -4,15 +4,19 @@ UploadWidget — multiple TikTok accounts, multi-browser, post-now / scheduled.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+import re
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PyQt6.QtCore import (
-    Qt, QDate, QThread, QTimer, pyqtSignal, QSize,
+    Qt, QDate, QLocale, QPoint, QRect, QThread, QTimer, pyqtSignal, QSize,
 )
-from PyQt6.QtGui import QBrush, QColor, QFont, QTextCharFormat, QWheelEvent
+from PyQt6.QtGui import (
+    QBrush, QColor, QFont, QIcon, QPainter, QPen, QTextCharFormat, QWheelEvent,
+)
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCalendarWidget, QComboBox,
+    QAbstractItemView, QApplication, QButtonGroup, QCalendarWidget, QComboBox,
     QDialog, QDialogButtonBox,
     QFileDialog, QFrame, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
@@ -34,93 +38,214 @@ logger = logging.getLogger(__name__)
 # TikTok caption character limit (may vary by region)
 TIKTOK_CAPTION_LIMIT = 4000
 
+# Janela aceita pelo agendador do TikTok (tiktok-uploader descarta fora disso)
+SCHEDULE_MIN_LEAD = timedelta(minutes=20)
+SCHEDULE_MAX_AHEAD = timedelta(days=10)
+
+
+def build_daily_schedule(
+    n: int, times: list[str], start_date: date, now: datetime | None = None
+) -> list[datetime]:
+    """Distribui n vídeos nos horários diários ('HH:MM'), dia após dia, a partir de start_date.
+
+    Horários a menos de 20 min de agora são pulados (TikTok rejeitaria).
+    """
+    now = now or datetime.now()
+    clock = sorted({tuple(map(int, t.split(":"))) for t in times})
+    if n <= 0 or not clock:
+        return []
+    slots: list[datetime] = []
+    day = start_date
+    while len(slots) < n:
+        for h, m in clock:
+            dt = datetime(day.year, day.month, day.day, h, m)
+            if dt - now >= SCHEDULE_MIN_LEAD:
+                slots.append(dt)
+                if len(slots) == n:
+                    break
+        day += timedelta(days=1)
+    return slots
+
 
 # ---------------------------------------------------------------------------
 # AI Generator Thread
 # ---------------------------------------------------------------------------
-class AIGeneratorThread(QThread):
-    finished = pyqtSignal(bool, str, list)  # success, text, tags
+# 2.0-flash foi desligado em 06/2026; o alias "latest" é fallback se o 1º também sair do ar.
+_GEMINI_MODELS = ("gemini-3.8-flash", "gemini-flash-latest")
 
-    def __init__(self, api_key: str, context: str, language: str = "Português"):
+
+# Teto de vídeos por request: lotes maiores são divididos (limite de tokens de saída).
+_GEMINI_BATCH_SIZE = 20
+
+
+@dataclass
+class CaptionResult:
+    """Descrição + hashtags (sem '#') geradas para um vídeo."""
+    description: str
+    hashtags: list[str] = field(default_factory=list)
+
+
+# Structured output: o Gemini devolve JSON validado contra este schema.
+_CAPTIONS_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "videos": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "id": {"type": "INTEGER"},
+                    "description": {"type": "STRING"},
+                    "hashtags": {"type": "ARRAY", "items": {"type": "STRING"}},
+                },
+                "required": ["id", "description", "hashtags"],
+            },
+        },
+    },
+    "required": ["videos"],
+}
+
+
+def _gemini_request(api_key: str, body: dict) -> dict:
+    """POST no generateContent, caindo para o próximo modelo em 404. Retorna o JSON da resposta."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    for i, model in enumerate(_GEMINI_MODELS):
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+            },
+        )
+        try:
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read())
+        except urllib.error.HTTPError as e:
+            # 404 = modelo desligado/inexistente: tenta o próximo
+            if e.code != 404 or i == len(_GEMINI_MODELS) - 1:
+                raise
+            logger.warning(f"Gemini model '{model}' indisponível (404), tentando o próximo.")
+    raise RuntimeError("Nenhum modelo Gemini disponível.")
+
+
+def _gemini_captions_batch(
+    api_key: str, contexts: list[str], language: str
+) -> dict[int, CaptionResult]:
+    """Gera descrição + hashtags de N vídeos num único request.
+
+    Retorna {índice em contexts: CaptionResult}; índices ausentes = a IA pulou o vídeo.
+    """
+    import json
+
+    videos_txt = "\n".join(f"- id {i}: {ctx}" for i, ctx in enumerate(contexts))
+    prompt = f"""
+Você é um especialista em redes sociais (TikTok, Reels, Shorts).
+Escreva uma descrição e hashtags virais para CADA um dos {len(contexts)} vídeos abaixo.
+Cada vídeo deve ter texto próprio, sem repetir a mesma descrição entre vídeos.
+
+Vídeos (id: contexto):
+{videos_txt}
+
+Regras:
+- Idioma: {language}.
+- "description": texto chamativo, envolvente (com emojis), sem hashtags.
+- "hashtags": 3 a 8 hashtags relevantes, sem o caractere '#'.
+- Devolva exatamente um item por id recebido, usando o mesmo id.
+"""
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": _CAPTIONS_SCHEMA,
+        },
+    }
+    result = _gemini_request(api_key, body)
+
+    text_response = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+    # Defensivo: alguns modelos ainda embrulham em ```json mesmo com responseMimeType
+    text_response = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_response)
+
+    captions: dict[int, CaptionResult] = {}
+    for v in json.loads(text_response).get("videos", []):
+        idx = v.get("id")
+        if isinstance(idx, int) and 0 <= idx < len(contexts) and idx not in captions:
+            captions[idx] = CaptionResult(
+                description=str(v.get("description", "")).strip(),
+                hashtags=[str(t).strip().lstrip("#") for t in v.get("hashtags", []) if str(t).strip()],
+            )
+    return captions
+
+
+def _http_error_message(e) -> str:
+    """Extrai a mensagem útil de um HTTPError do Gemini (com dica no 403)."""
+    import json
+
+    try:
+        error_body = e.read().decode("utf-8")
+        # Try to parse it as JSON to get the actual message
+        err_json = json.loads(error_body)
+        if "error" in err_json and "message" in err_json["error"]:
+            msg = f"HTTP {e.code}: {err_json['error']['message']}"
+        else:
+            msg = f"HTTP {e.code}: {error_body}"
+    except Exception:
+        msg = str(e)
+
+    # Se for 403 e a chave estiver incorreta ou sem permissões
+    if e.code == 403:
+        from config.paths import get_user_config_file
+        config_path = get_user_config_file()
+        msg += f"\n\nDica: Mude sua chave de API nas configurações ou verifique se você possui os acessos necessários na conta do Google. Caso a chave esteja errada, apague-a no {config_path} para que o programa peça novamente."
+    return msg
+
+
+class AIGeneratorThread(QThread):
+    """Gera descrição + hashtags para (path, contexto): um request por lote de vídeos."""
+    item_done = pyqtSignal(str, str, list)   # path, description, tags
+    item_failed = pyqtSignal(str, str)       # path, error message
+    progress = pyqtSignal(int, int)          # done, total
+
+    def __init__(self, api_key: str, items: list[tuple[str, str]], language: str = "Português"):
         super().__init__()
         self.api_key = api_key
-        self.context = context
+        self.items = items
         self.language = language
 
     def run(self):
-        import urllib.request
         import urllib.error
-        import json
 
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-
-        prompt = f"""
-Você é um especialista em redes sociais (TikTok, Reels, Shorts).
-O usuário quer uma descrição e hashtags virais para um vídeo.
-Contexto do vídeo: {self.context}
-
-Por favor, escreva o conteúdo inteiramente no idioma: {self.language}.
-
-Responda SOMENTE em JSON no seguinte formato (sem bloco markdown):
-{{
-  "description": "Texto chamativo, envolvente (com emojis). Não inclua as hashtags aqui.",
-  "hashtags": ["tag1", "tag2", "tag3"]
-}}
-"""
-        data = {
-            "contents": [{"parts": [{"text": prompt}]}]
-        }
-
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key,
-            },
-        )
-        
-        try:
-            with urllib.request.urlopen(req) as response:
-                result_raw = response.read()
-                result = json.loads(result_raw)
-                
-                text_response = result["candidates"][0]["content"]["parts"][0]["text"]
-                text_response = text_response.strip()
-                
-                if text_response.startswith("```json"):
-                    text_response = text_response[7:]
-                if text_response.startswith("```"):
-                    text_response = text_response[3:]
-                if text_response.endswith("```"):
-                    text_response = text_response[:-3]
-                    
-                data_json = json.loads(text_response.strip())
-                desc = data_json.get("description", "")
-                tags = data_json.get("hashtags", [])
-                
-                self.finished.emit(True, desc, tags)
-        except urllib.error.HTTPError as e:
+        total = len(self.items)
+        for start in range(0, total, _GEMINI_BATCH_SIZE):
+            if self.isInterruptionRequested():
+                return
+            chunk = self.items[start:start + _GEMINI_BATCH_SIZE]
             try:
-                error_body = e.read().decode("utf-8")
-                # Try to parse it as JSON to get the actual message
-                err_json = json.loads(error_body)
-                if "error" in err_json and "message" in err_json["error"]:
-                    msg = f"HTTP {e.code}: {err_json['error']['message']}"
+                captions = _gemini_captions_batch(
+                    self.api_key, [ctx for _, ctx in chunk], self.language
+                )
+            except urllib.error.HTTPError as e:
+                msg = _http_error_message(e)
+                for path, _ in chunk:
+                    self.item_failed.emit(path, msg)
+                if e.code in (401, 403):
+                    return  # chave inválida: não adianta tentar os próximos
+                continue
+            except Exception as e:
+                for path, _ in chunk:
+                    self.item_failed.emit(path, str(e))
+                continue
+
+            for i, (path, _) in enumerate(chunk):
+                cap = captions.get(i)
+                if cap is None:
+                    self.item_failed.emit(path, "A IA não retornou legenda para este vídeo.")
                 else:
-                    msg = f"HTTP {e.code}: {error_body}"
-            except Exception:
-                msg = str(e)
-            
-            # Se for 403 e a chave estiver incorreta ou sem permissões
-            if e.code == 403:
-                from config.paths import get_user_config_file
-                config_path = get_user_config_file()
-                msg += f"\n\nDica: Mude sua chave de API nas configurações ou verifique se você possui os acessos necessários na conta do Google. Caso a chave esteja errada, apague-a no {config_path} para que o programa peça novamente."
-                
-            self.finished.emit(False, msg, [])
-        except Exception as e:
-            self.finished.emit(False, str(e), [])
+                    self.item_done.emit(path, cap.description, cap.hashtags)
+            self.progress.emit(min(start + len(chunk), total), total)
 
 # ---------------------------------------------------------------------------
 # Custom drum-roll widget (kept for standalone use)
@@ -157,7 +282,7 @@ class DrumRoll(QWidget):
         font.setBold(True)
         self._lbl.setFont(font)
         self._lbl.setStyleSheet(
-            "color: #ffffff; background: #1e293b; border: 2px solid #3b82f6;"
+            "color: #ffffff; background: #18181b; border: 2px solid #3b82f6;"
             " border-radius: 8px;"
         )
 
@@ -172,7 +297,7 @@ class DrumRoll(QWidget):
 
         for btn in (self._btn_up, self._btn_down):
             btn.setStyleSheet(
-                "QPushButton { background: #334155; color: #94a3b8; border: none;"
+                "QPushButton { background: #27272a; color: #a1a1aa; border: none;"
                 " border-radius: 6px; font-size: 13px; }"
                 "QPushButton:hover { background: #3b82f6; color: white; }"
                 "QPushButton:pressed { background: #2563eb; }"
@@ -207,13 +332,212 @@ class DrumRoll(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Calendário escuro + botão de data com popup
+# ---------------------------------------------------------------------------
+
+_WEEKDAYS_PT = ("seg", "ter", "qua", "qui", "sex", "sáb", "dom")
+_MONTHS_PT = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+_MONTHS_PT_FULL = (
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+)
+
+
+def format_date_pt(d: date) -> str:
+    """Data curta em PT ("qui, 29 de out")."""
+    return f"{_WEEKDAYS_PT[d.weekday()]}, {d.day} de {_MONTHS_PT[d.month - 1]}"
+
+
+class DarkCalendar(QCalendarWidget):
+    """Calendário escuro no estilo do TikTok Studio: dia escolhido em círculo, fora do range apagado."""
+
+    _ACCENT = QColor("#EC4899")
+    _TODAY = QColor("#3B82F6")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setGridVisible(False)
+        self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self.setHorizontalHeaderFormat(QCalendarWidget.HorizontalHeaderFormat.ShortDayNames)
+        self.setFirstDayOfWeek(Qt.DayOfWeek.Sunday)
+        self.setLocale(QLocale(QLocale.Language.Portuguese, QLocale.Country.Brazil))
+        self.setFixedSize(300, 290)
+
+        header_fmt = QTextCharFormat()
+        header_fmt.setForeground(QBrush(QColor("#71717a")))
+        header_fmt.setFontWeight(QFont.Weight.DemiBold)
+        self.setHeaderTextFormat(header_fmt)
+        for day in Qt.DayOfWeek:
+            self.setWeekdayTextFormat(day, QTextCharFormat())
+
+        # Setas de mês como texto (os ícones nativos somem no tema escuro)
+        for name, glyph in (("qt_calendar_prevmonth", "‹"), ("qt_calendar_nextmonth", "›")):
+            btn = self.findChild(QToolButton, name)
+            if btn is not None:
+                btn.setIcon(QIcon())
+                btn.setText(glyph)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        for name in ("qt_calendar_monthbutton", "qt_calendar_yearbutton"):
+            btn = self.findChild(QToolButton, name)
+            if btn is not None:
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("""
+            QCalendarWidget QWidget { background-color: #09090b; color: #e4e4e7;
+                alternate-background-color: #09090b; }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: #09090b; border: none; padding: 4px 4px 2px 4px; min-height: 38px; }
+            QCalendarWidget QToolButton { color: #fafafa; background: transparent; border: none;
+                font-size: 14px; font-weight: 700; padding: 4px 8px; border-radius: 8px; }
+            QCalendarWidget QToolButton:hover { background: #18181b; }
+            QCalendarWidget QToolButton#qt_calendar_prevmonth,
+            QCalendarWidget QToolButton#qt_calendar_nextmonth {
+                font-size: 22px; font-weight: 400; min-width: 30px; max-width: 30px; padding: 0 0 3px 0; }
+            QCalendarWidget QToolButton::menu-indicator { image: none; width: 0; }
+            QCalendarWidget QMenu { background: #18181b; color: #e4e4e7; border: 1px solid #27272a; }
+            QCalendarWidget QMenu::item:selected { background: #3B82F6; }
+            QCalendarWidget QSpinBox { background: #18181b; color: #e4e4e7; border: 1px solid #27272a;
+                border-radius: 6px; padding: 2px 6px; selection-background-color: #3B82F6; }
+            QCalendarWidget QAbstractItemView { background-color: #09090b; outline: 0; border: none;
+                font-size: 13px; selection-background-color: transparent; }
+        """)
+
+    def paintCell(self, painter: QPainter, rect: QRect, qdate: QDate) -> None:
+        shown = qdate.month() == self.monthShown() and qdate.year() == self.yearShown()
+        if not shown:
+            return  # só os dias do mês exibido, como no TikTok
+        enabled = self.minimumDate() <= qdate <= self.maximumDate()
+        selected = qdate == self.selectedDate()
+        today = qdate == QDate.currentDate()
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        side = min(rect.width(), rect.height()) - 6
+        circle = QRect(0, 0, side, side)
+        circle.moveCenter(rect.center())
+        if selected:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._ACCENT)
+            painter.drawEllipse(circle)
+        elif today:
+            painter.setPen(QPen(self._TODAY, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(circle)
+
+        font = painter.font()
+        font.setBold(selected or today)
+        painter.setFont(font)
+        if selected:
+            color = QColor("#FFFFFF")
+        elif enabled:
+            color = QColor("#fafafa")
+        else:
+            color = QColor("#27272a")
+        painter.setPen(color)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(qdate.day()))
+        painter.restore()
+
+
+class DatePickerButton(QPushButton):
+    """Botão que mostra a data e abre um DarkCalendar com atalhos (Hoje/Amanhã/+7 dias)."""
+    dateChanged = pyqtSignal(QDate)
+
+    def __init__(self, initial: QDate | None = None, parent=None):
+        super().__init__(parent)
+        self._date = initial or QDate.currentDate()
+        self._min = QDate.currentDate()
+        self._max = QDate(7999, 12, 31)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clicked.connect(self._open_popup)
+        self._refresh_text()
+
+    def date(self) -> QDate:
+        return self._date
+
+    def setDate(self, qdate: QDate) -> None:
+        if qdate == self._date:
+            return
+        self._date = qdate
+        self._refresh_text()
+        self.dateChanged.emit(qdate)
+
+    def setDateRange(self, minimum: QDate, maximum: QDate) -> None:
+        self._min, self._max = minimum, maximum
+
+    def _refresh_text(self) -> None:
+        self.setText(f"{format_date_pt(self._date.toPyDate())}  ▾")
+
+    def _open_popup(self) -> None:
+        popup = QFrame(self, Qt.WindowType.Popup)
+        popup.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        popup.setStyleSheet("""
+            QFrame#calPopup { background: #09090b; border: 1px solid #18181b; border-radius: 14px; }
+            QPushButton { background: #18181b; color: #d4d4d8; border: 1px solid #27272a;
+                border-radius: 13px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
+            QPushButton:hover { background: rgba(236,72,153,0.18); color: #FFFFFF;
+                border-color: #EC4899; }
+        """)
+        popup.setObjectName("calPopup")
+        lay = QVBoxLayout(popup)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
+
+        cal = DarkCalendar(popup)
+        cal.setDateRange(self._min, self._max)
+        cal.setSelectedDate(self._date)
+        lay.addWidget(cal)
+
+        def pick(qdate: QDate) -> None:
+            self.setDate(qdate)
+            popup.close()
+
+        cal.clicked.connect(pick)
+        cal.activated.connect(pick)
+
+        quick = QHBoxLayout()
+        quick.setSpacing(6)
+        today = QDate.currentDate()
+        for label, days in (("Hoje", 0), ("Amanhã", 1), ("+7 dias", 7)):
+            target = today.addDays(days)
+            if not (self._min <= target <= self._max):
+                continue
+            btn = QPushButton(label)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, d=target: pick(d))
+            quick.addWidget(btn)
+        quick.addStretch()
+        lay.addLayout(quick)
+
+        popup.adjustSize()
+        popup.move(self._popup_pos(popup.sizeHint()))
+        popup.show()
+
+    def _popup_pos(self, size) -> QPoint:
+        """Posição do popup dentro da área útil da tela.
+
+        Abre acima do botão quando não cabe embaixo (barra de tarefas).
+        """
+        below = self.mapToGlobal(self.rect().bottomLeft()) + QPoint(0, 6)
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return below
+        avail = screen.availableGeometry()
+        x, y = below.x(), below.y()
+        if y + size.height() > avail.bottom():
+            above = self.mapToGlobal(self.rect().topLeft()).y() - size.height() - 6
+            y = above if above >= avail.top() else avail.bottom() - size.height()
+        x = max(avail.left(), min(x, avail.right() - size.width()))
+        y = max(avail.top(), min(y, avail.bottom() + 1 - size.height()))
+        return QPoint(x, y)
+
+
+# ---------------------------------------------------------------------------
 # Compact inline date+time picker (like TikTok Studio)
 # ---------------------------------------------------------------------------
 
 class InlineDateTimePicker(QWidget):
-    """
-    Modern date + time picker with labeled cards and quick-pick times.
-    """
+    """Seletor de data e hora com cards e horários rápidos."""
+    changed = pyqtSignal()  # só em edição pelo usuário (não em set_datetime)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         now = datetime.now()
@@ -229,108 +553,60 @@ class InlineDateTimePicker(QWidget):
 
         # ── Row: time + date cards side by side ──────────────────────
         row = QHBoxLayout()
-        row.setSpacing(14)
+        row.setSpacing(12)
+
+        def card(caption: str, accent: str) -> tuple[QFrame, QVBoxLayout]:
+            frame = QFrame()
+            frame.setObjectName("dtCard")
+            frame.setMinimumWidth(190)
+            frame.setStyleSheet(f"""
+                QFrame#dtCard {{
+                    background: #0c0c0e; border: 1.5px solid #18181b; border-radius: 14px;
+                }}
+                QFrame#dtCard:hover {{ border-color: {accent}; }}
+            """)
+            inner = QVBoxLayout(frame)
+            inner.setContentsMargins(16, 10, 12, 10)
+            inner.setSpacing(2)
+            lbl = QLabel(caption)
+            lbl.setStyleSheet(
+                f"color: {accent}; font-size: 10px; font-weight: 800;"
+                " letter-spacing: 1.5px; background: transparent; border: none;"
+            )
+            inner.addWidget(lbl)
+            return frame, inner
+
+        # ── Date card (abre o calendário) ────────────────────────────
+        date_frame, date_card = card("📅  DATA", "#EC4899")
+        self._date_edit = DatePickerButton(QDate(default.year, default.month, default.day))
+        self._date_edit.setToolTip("Clique para abrir o calendário")
+        self._date_edit.setStyleSheet("""
+            QPushButton {
+                background: transparent; border: none; color: #fafafa; text-align: left;
+                font-size: 20px; font-weight: 800; padding: 2px 0;
+            }
+            QPushButton:hover { color: #F9A8D4; }
+        """)
+        today = QDate.currentDate()
+        self._date_edit.setDateRange(today, today.addDays(SCHEDULE_MAX_AHEAD.days))
+        date_card.addWidget(self._date_edit)
+        row.addWidget(date_frame)
 
         # ── Time card ────────────────────────────────────────────────
-        time_frame = QFrame()
-        time_frame.setStyleSheet("""
-            QFrame {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(30, 41, 59, 0.9), stop:1 rgba(15, 23, 42, 0.9));
-                border: 1.5px solid rgba(59, 130, 246, 0.25);
-                border-radius: 14px;
-            }
-        """)
-        time_card = QVBoxLayout(time_frame)
-        time_card.setContentsMargins(16, 12, 16, 12)
-        time_card.setSpacing(6)
-
-        lbl_t = QLabel("HORA")
-        lbl_t.setStyleSheet(
-            "color: #60a5fa; font-size: 10px; font-weight: 800;"
-            " letter-spacing: 1.5px; background: transparent; border: none;"
-        )
-        time_card.addWidget(lbl_t)
-
+        time_frame, time_card = card("🕒  HORA", "#3B82F6")
         self._time_edit = QTimeEdit()
         self._time_edit.setTime(QTime(default.hour, default.minute))
         self._time_edit.setDisplayFormat("HH:mm")
+        self._time_edit.setButtonSymbols(QTimeEdit.ButtonSymbols.NoButtons)
+        self._time_edit.setToolTip("Digite ou role o mouse sobre a hora/minuto")
         self._time_edit.setStyleSheet("""
             QTimeEdit {
-                background: transparent; border: none; color: #f0f4ff;
-                font-size: 28px; font-weight: 800; font-family: 'Segoe UI', sans-serif;
-            }
-            QTimeEdit::up-button {
-                width: 22px; border-radius: 5px;
-                border: 1px solid rgba(59, 130, 246, 0.2);
-                background: rgba(30, 41, 59, 0.6); margin-bottom: 1px;
-            }
-            QTimeEdit::down-button {
-                width: 22px; border-radius: 5px;
-                border: 1px solid rgba(59, 130, 246, 0.2);
-                background: rgba(30, 41, 59, 0.6); margin-top: 1px;
-            }
-            QTimeEdit::up-button:hover, QTimeEdit::down-button:hover {
-                background: rgba(59, 130, 246, 0.4);
-                border-color: #3b82f6;
+                background: transparent; border: none; color: #fafafa; padding: 0;
+                font-size: 20px; font-weight: 800; selection-background-color: #3B82F6;
             }
         """)
         time_card.addWidget(self._time_edit)
         row.addWidget(time_frame)
-
-        # ── Date card ────────────────────────────────────────────────
-        date_frame = QFrame()
-        date_frame.setStyleSheet("""
-            QFrame {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(30, 41, 59, 0.9), stop:1 rgba(15, 23, 42, 0.9));
-                border: 1.5px solid rgba(139, 92, 246, 0.25);
-                border-radius: 14px;
-            }
-        """)
-        date_card = QVBoxLayout(date_frame)
-        date_card.setContentsMargins(16, 12, 16, 12)
-        date_card.setSpacing(6)
-
-        lbl_d = QLabel("DATA")
-        lbl_d.setStyleSheet(
-            "color: #a78bfa; font-size: 10px; font-weight: 800;"
-            " letter-spacing: 1.5px; background: transparent; border: none;"
-        )
-        date_card.addWidget(lbl_d)
-
-        self._date_edit = QDateEdit()
-        self._date_edit.setDate(QDate(default.year, default.month, default.day))
-        self._date_edit.setDisplayFormat("dd/MM/yyyy")
-        self._date_edit.setMinimumDate(QDate.currentDate())
-        self._date_edit.setCalendarPopup(True)
-        self._date_edit.setStyleSheet("""
-            QDateEdit {
-                background: transparent; border: none; color: #f0f4ff;
-                font-size: 22px; font-weight: 800; font-family: 'Segoe UI', sans-serif;
-            }
-            QDateEdit::up-button {
-                width: 20px; border-radius: 5px;
-                border: 1px solid rgba(139, 92, 246, 0.2);
-                background: rgba(30, 41, 59, 0.6);
-            }
-            QDateEdit::down-button {
-                width: 20px; border-radius: 5px;
-                border: 1px solid rgba(139, 92, 246, 0.2);
-                background: rgba(30, 41, 59, 0.6);
-            }
-            QDateEdit::up-button:hover, QDateEdit::down-button:hover {
-                background: rgba(139, 92, 246, 0.4);
-                border-color: #8b5cf6;
-            }
-            QDateEdit::drop-down {
-                subcontrol-origin: padding; subcontrol-position: right center;
-                width: 22px; border: none;
-            }
-        """)
-        self._style_calendar_popup(self._date_edit.calendarWidget())
-        date_card.addWidget(self._date_edit)
-        row.addWidget(date_frame)
         row.addStretch()
 
         layout.addLayout(row)
@@ -368,13 +644,39 @@ class InlineDateTimePicker(QWidget):
 
         self._update_summary()
 
-        self._time_edit.timeChanged.connect(lambda _: self._update_summary())
-        self._date_edit.dateChanged.connect(lambda _: self._update_summary())
+        self._time_edit.timeChanged.connect(lambda _: self._on_edited())
+        self._date_edit.dateChanged.connect(lambda _: self._on_edited())
+
+    def _on_edited(self):
+        self._update_summary()
+        self.changed.emit()
+
+    def set_datetime(self, dt: datetime | None):
+        """Mostra dt sem emitir `changed`; None = vídeo ainda sem horário."""
+        if dt is not None:
+            for w in (self._time_edit, self._date_edit):
+                w.blockSignals(True)
+            self._date_edit.setDate(QDate(dt.year, dt.month, dt.day))
+            self._time_edit.setTime(QTime(dt.hour, dt.minute))
+            for w in (self._time_edit, self._date_edit):
+                w.blockSignals(False)
+            self._update_summary()
+        else:
+            self._lbl_summary.setText(
+                "⚠ Este vídeo ainda não tem horário — ajuste acima ou use o Padrão diário."
+            )
+
+    def shortcut_times(self) -> list[str]:
+        return list(self._shortcut_times)
+
+    def set_shortcut_times(self, times: list[str]):
+        self._shortcut_times = sorted(times)
+        self._build_favorites_row()
 
     def _update_summary(self):
         dt = self.selected_datetime()
         self._lbl_summary.setText(
-            f"Agendado para: {dt.strftime('%A, %d/%m/%Y')}  \u2022  {dt.strftime('%H:%M')}"
+            f"\u2713  Agendado para {format_date_pt(dt.date())} de {dt.year}  \u2022  {dt:%H:%M}"
         )
 
     def _set_favorite_time(self, time_str: str):
@@ -384,17 +686,17 @@ class InlineDateTimePicker(QWidget):
     # ── Shortcut chips + editor ──────────────────────────────────────
     _FAV_BTN_STYLE = """
         QPushButton {
-            background: rgba(30, 41, 59, 0.5);
-            color: #94a3b8;
-            border: 1px solid rgba(51, 65, 85, 0.5);
-            border-radius: 14px;
-            padding: 4px 12px;
+            background: rgba(24, 24, 27, 0.5);
+            color: #a1a1aa;
+            border: 1px solid rgba(39, 39, 42, 0.5);
+            border-radius: 12px;
+            padding: 0 14px; min-height: 26px;
             font-size: 12px;
             font-weight: 600;
         }
         QPushButton:hover {
-            background: rgba(59, 130, 246, 0.15);
-            color: #e2e8f0;
+            background: rgba(59, 130, 246, 0.18);
+            color: #e4e4e7;
             border-color: rgba(59, 130, 246, 0.4);
         }
         QPushButton:pressed {
@@ -406,15 +708,15 @@ class InlineDateTimePicker(QWidget):
     _PENCIL_BTN_STYLE = """
         QPushButton {
             background: transparent;
-            color: #64748b;
-            border: 1px solid rgba(51, 65, 85, 0.5);
-            border-radius: 14px;
-            padding: 3px 10px;
+            color: #71717a;
+            border: 1px solid rgba(39, 39, 42, 0.5);
+            border-radius: 12px;
+            padding: 0 10px; min-height: 26px;
             font-size: 13px;
         }
         QPushButton:hover {
             background: rgba(139, 92, 246, 0.15);
-            color: #e2e8f0;
+            color: #e4e4e7;
             border-color: rgba(139, 92, 246, 0.5);
         }
     """
@@ -429,7 +731,7 @@ class InlineDateTimePicker(QWidget):
 
         lbl_fav = QLabel("Atalhos:")
         lbl_fav.setStyleSheet(
-            "color: #475569; font-size: 11px; font-weight: 600;"
+            "color: #3f3f46; font-size: 11px; font-weight: 600;"
             " background: transparent; border: none;"
         )
         self._fav_row.addWidget(lbl_fav)
@@ -456,100 +758,6 @@ class InlineDateTimePicker(QWidget):
             self._shortcut_times = dlg.result_times()
             self._build_favorites_row()
 
-    # ── Calendar popup styling ───────────────────────────────────────
-    def _style_calendar_popup(self, cal: QCalendarWidget) -> None:
-        """Dark-theme styling for the QCalendarWidget popup of QDateEdit."""
-        cal.setGridVisible(False)
-        cal.setVerticalHeaderFormat(
-            QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader
-        )
-        cal.setHorizontalHeaderFormat(
-            QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames
-        )
-        cal.setFirstDayOfWeek(Qt.DayOfWeek.Sunday)
-
-        weekday_fmt = QTextCharFormat()
-        weekday_fmt.setForeground(QBrush(QColor("#e2e8f0")))
-        weekend_fmt = QTextCharFormat()
-        weekend_fmt.setForeground(QBrush(QColor("#cbd5e1")))
-        for day in (
-            Qt.DayOfWeek.Monday, Qt.DayOfWeek.Tuesday, Qt.DayOfWeek.Wednesday,
-            Qt.DayOfWeek.Thursday, Qt.DayOfWeek.Friday,
-        ):
-            cal.setWeekdayTextFormat(day, weekday_fmt)
-        cal.setWeekdayTextFormat(Qt.DayOfWeek.Saturday, weekend_fmt)
-        cal.setWeekdayTextFormat(Qt.DayOfWeek.Sunday, weekend_fmt)
-
-        cal.setStyleSheet("""
-            QCalendarWidget QWidget {
-                background-color: #0f172a;
-                color: #e2e8f0;
-                alternate-background-color: #0f172a;
-            }
-            QCalendarWidget QAbstractItemView {
-                background-color: #0f172a;
-                color: #e2e8f0;
-                selection-background-color: #3b82f6;
-                selection-color: #ffffff;
-                outline: 0;
-                border: none;
-                font-size: 12px;
-                font-family: 'Segoe UI', sans-serif;
-            }
-            QCalendarWidget QAbstractItemView:enabled {
-                color: #e2e8f0;
-            }
-            QCalendarWidget QAbstractItemView:disabled {
-                color: #475569;
-            }
-            QCalendarWidget QWidget#qt_calendar_navigationbar {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1e293b, stop:1 #0f172a);
-                border-bottom: 1px solid rgba(59, 130, 246, 0.25);
-                min-height: 36px;
-            }
-            QCalendarWidget QToolButton {
-                color: #e2e8f0;
-                background: transparent;
-                border: none;
-                font-size: 13px;
-                font-weight: 700;
-                padding: 6px 10px;
-                border-radius: 6px;
-            }
-            QCalendarWidget QToolButton:hover {
-                background: rgba(59, 130, 246, 0.2);
-                color: #ffffff;
-            }
-            QCalendarWidget QToolButton::menu-indicator {
-                image: none;
-                width: 0;
-            }
-            QCalendarWidget QToolButton#qt_calendar_prevmonth,
-            QCalendarWidget QToolButton#qt_calendar_nextmonth {
-                qproperty-icon: none;
-                font-size: 16px;
-                padding: 0 8px;
-            }
-            QCalendarWidget QMenu {
-                background: #1e293b;
-                color: #e2e8f0;
-                border: 1px solid rgba(59, 130, 246, 0.3);
-            }
-            QCalendarWidget QSpinBox {
-                background: #1e293b;
-                color: #e2e8f0;
-                border: 1px solid rgba(59, 130, 246, 0.3);
-                border-radius: 4px;
-                padding: 2px 6px;
-                selection-background-color: #3b82f6;
-            }
-            QCalendarWidget QTableView {
-                selection-background-color: #3b82f6;
-                selection-color: #ffffff;
-            }
-        """)
-
     def selected_datetime(self) -> datetime:
         qd = self._date_edit.date()
         qt = self._time_edit.time()
@@ -567,11 +775,11 @@ class ShortcutsEditorDialog(QDialog):
         self._times: list[str] = list(times)
 
         self.setStyleSheet("""
-            QDialog { background: #0f172a; }
-            QLabel { color: #e2e8f0; font-size: 12px; background: transparent; }
+            QDialog { background: #09090b; }
+            QLabel { color: #e4e4e7; font-size: 12px; background: transparent; }
             QListWidget {
-                background: #1e293b;
-                color: #e2e8f0;
+                background: #18181b;
+                color: #e4e4e7;
                 border: 1px solid rgba(59, 130, 246, 0.25);
                 border-radius: 8px;
                 padding: 4px;
@@ -583,8 +791,8 @@ class ShortcutsEditorDialog(QDialog):
                 color: #ffffff;
             }
             QTimeEdit {
-                background: #1e293b;
-                color: #e2e8f0;
+                background: #18181b;
+                color: #e4e4e7;
                 border: 1px solid rgba(59, 130, 246, 0.25);
                 border-radius: 6px;
                 padding: 4px 8px;
@@ -593,7 +801,7 @@ class ShortcutsEditorDialog(QDialog):
             }
             QPushButton {
                 background: rgba(59, 130, 246, 0.15);
-                color: #e2e8f0;
+                color: #e4e4e7;
                 border: 1px solid rgba(59, 130, 246, 0.35);
                 border-radius: 6px;
                 padding: 6px 14px;
@@ -669,14 +877,75 @@ class ShortcutsEditorDialog(QDialog):
         return sorted(self._times)
 
 
+class DailyPatternDialog(ShortcutsEditorDialog):
+    """Escolhe data inicial + horários do dia e prévia da distribuição dos vídeos."""
+
+    def __init__(self, times: list[str], n_videos: int, parent=None):
+        self._n_videos = n_videos
+        self._lbl_preview: QLabel | None = None
+        super().__init__(times, parent)
+        self.setWindowTitle("Padrão diário de postagem")
+        self.setMinimumWidth(380)
+
+        outer = self.layout()
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Começar em:"))
+        self._start = DatePickerButton(QDate.currentDate())
+        today = QDate.currentDate()
+        self._start.setDateRange(today, today.addDays(SCHEDULE_MAX_AHEAD.days))
+        self._start.setStyleSheet(
+            "QPushButton { background: #18181b; color: #e4e4e7; border: 1px solid rgba(236,72,153,0.35);"
+            " border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 700; }"
+            "QPushButton:hover { border-color: #EC4899; }"
+        )
+        self._start.dateChanged.connect(lambda _: self._update_preview())
+        top.addWidget(self._start)
+        top.addStretch()
+        outer.insertLayout(0, top)
+
+        intro = QLabel(f"{n_videos} vídeo(s) serão distribuídos nestes horários, um dia após o outro.")
+        intro.setWordWrap(True)
+        outer.insertWidget(1, intro)
+
+        self._lbl_preview = QLabel()
+        self._lbl_preview.setWordWrap(True)
+        outer.insertWidget(outer.count() - 1, self._lbl_preview)
+        self._update_preview()
+
+    def _refresh_list(self) -> None:
+        super()._refresh_list()
+        self._update_preview()
+
+    def _update_preview(self) -> None:
+        if self._lbl_preview is None:
+            return
+        slots = build_daily_schedule(self._n_videos, self._times, self.start_date())
+        if not slots:
+            self._lbl_preview.setText("Adicione pelo menos um horário.")
+            self._lbl_preview.setStyleSheet("color: #fca5a5;")
+            return
+        days = len({d.date() for d in slots})
+        txt = (f"{len(self._times)} por dia → {days} dia(s).\n"
+               f"1º: {slots[0]:%d/%m %H:%M}   ·   último: {slots[-1]:%d/%m %H:%M}")
+        if slots[-1] - datetime.now() > SCHEDULE_MAX_AHEAD:
+            txt += "\n⚠ Passa do limite de 10 dias do TikTok — adicione horários ou envie menos vídeos."
+            self._lbl_preview.setStyleSheet("color: #fca5a5;")
+        else:
+            self._lbl_preview.setStyleSheet("color: #93c5fd;")
+        self._lbl_preview.setText(txt)
+
+    def start_date(self) -> date:
+        return self._start.date().toPyDate()
+
+
 # ---------------------------------------------------------------------------
 # Hashtag chip widget
 # ---------------------------------------------------------------------------
 
 class HashtagBar(QWidget):
-    """
-    Shows added hashtags as removable chips — like TikTok Studio.
-    """
+    """Hashtags como chips removíveis (estilo TikTok Studio)."""
+    changed = pyqtSignal()  # só em edição pelo usuário (não em set_tags)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._tags: list[str] = []
@@ -692,8 +961,8 @@ class HashtagBar(QWidget):
         self._input = QLineEdit()
         self._input.setPlaceholderText("# Adicionar hashtag  (Enter para confirmar)")
         self._input.setStyleSheet(
-            "QLineEdit { background: #0f172a; border: 1px solid #334155; border-radius: 8px;"
-            " color: #e2e8f0; padding: 6px 10px; font-size: 13px; }"
+            "QLineEdit { background: #09090b; border: 1px solid #27272a; border-radius: 8px;"
+            " color: #e4e4e7; padding: 6px 10px; font-size: 13px; }"
             "QLineEdit:focus { border-color: #3b82f6; }"
         )
         self._input.returnPressed.connect(self._add_from_input)
@@ -726,8 +995,8 @@ class HashtagBar(QWidget):
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet(
             "QScrollArea { border: none; background: transparent; }"
-            "QScrollBar:horizontal { height: 4px; background: #1e293b; border-radius: 2px; }"
-            "QScrollBar::handle:horizontal { background: #334155; border-radius: 2px; }"
+            "QScrollBar:horizontal { height: 4px; background: #18181b; border-radius: 2px; }"
+            "QScrollBar::handle:horizontal { background: #27272a; border-radius: 2px; }"
         )
         outer.addWidget(scroll)
 
@@ -735,15 +1004,15 @@ class HashtagBar(QWidget):
         suggestion_row = QHBoxLayout()
         suggestion_row.setSpacing(4)
         lbl_sug = QLabel("Sugestões:")
-        lbl_sug.setStyleSheet("color: #64748b; font-size: 11px; background: transparent;")
+        lbl_sug.setStyleSheet("color: #71717a; font-size: 11px; background: transparent;")
         suggestion_row.addWidget(lbl_sug)
         for tag in ["#fyp", "#viral", "#foryou", "#trending", "#fy"]:
             btn = QPushButton(tag)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(
-                "QPushButton { background: #1e293b; color: #94a3b8; border: 1px solid #334155;"
+                "QPushButton { background: #18181b; color: #a1a1aa; border: 1px solid #27272a;"
                 " border-radius: 12px; padding: 2px 8px; font-size: 11px; }"
-                "QPushButton:hover { background: #334155; color: #e2e8f0; }"
+                "QPushButton:hover { background: #27272a; color: #e4e4e7; }"
             )
             btn.clicked.connect(lambda checked, t=tag: self._add_tag(t))
             suggestion_row.addWidget(btn)
@@ -758,11 +1027,12 @@ class HashtagBar(QWidget):
             self._input.clear()
 
     def _add_tag(self, raw: str):
-        tag = "#" + raw.lstrip("#")
-        if tag in self._tags:
+        tag = "#" + raw.strip().lstrip("#")
+        if tag == "#" or tag in self._tags:
             return
         self._tags.append(tag)
         self._rebuild_chips()
+        self.changed.emit()
 
     def _rebuild_chips(self):
         # Remove all except the stretch at end
@@ -789,7 +1059,7 @@ class HashtagBar(QWidget):
             close_btn.setFixedSize(16, 16)
             close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             close_btn.setStyleSheet(
-                "QPushButton { background: transparent; border: none; color: #64748b; font-size: 10px; }"
+                "QPushButton { background: transparent; border: none; color: #71717a; font-size: 10px; }"
                 "QPushButton:hover { color: #ef4444; }"
             )
             close_btn.clicked.connect(lambda _, t=tag: self._remove_tag(t))
@@ -802,14 +1072,23 @@ class HashtagBar(QWidget):
         if tag in self._tags:
             self._tags.remove(tag)
             self._rebuild_chips()
+            self.changed.emit()
 
     def get_tags(self) -> list[str]:
-        """Return list of hashtag strings without the '#' prefix."""
+        """Lista de hashtags sem o prefixo '#'."""
         return [t.lstrip("#") for t in self._tags]
 
-    def clear(self):
-        self._tags.clear()
+    def set_tags(self, tags: list[str]):
+        """Substitui as hashtags sem emitir `changed`."""
+        self._tags = []
+        for t in tags:
+            tag = "#" + t.strip().lstrip("#")
+            if tag != "#" and tag not in self._tags:
+                self._tags.append(tag)
         self._rebuild_chips()
+
+    def clear(self):
+        self.set_tags([])
 
 
 # ---------------------------------------------------------------------------
@@ -838,7 +1117,7 @@ class LoginThread(QThread):
 
 class UploaderThread(QThread):
     progress = pyqtSignal(str)
-    finished = pyqtSignal(bool, str)
+    done = pyqtSignal(list)  # paths que falharam ([] = tudo ok)
 
     def __init__(
         self,
@@ -855,20 +1134,19 @@ class UploaderThread(QThread):
 
     def run(self):
         uploader = TikTokUploader(self.account_name)
+        self.progress.emit(
+            f"🚀 Enviando {len(self.tasks)} vídeo(s) em lote (conta '{self.account_name}')…"
+        )
         try:
-            self.progress.emit(f"🚀 Iniciando envio em lote (conta '{self.account_name}')…")
-
-            ok = uploader.upload_batch(
+            failed = uploader.upload_batch(
                 tasks=self.tasks,
                 headless=self.headless,
                 browser_name=self.browser,
             )
-            if ok:
-                self.finished.emit(True, "Todos os uploads concluídos com sucesso!")
-            else:
-                self.finished.emit(False, "Falha em um ou mais uploads. Verifique os cookies e os arquivos.")
         except Exception as exc:
-            self.finished.emit(False, f"Erro: {exc}")
+            logger.error(f"Upload thread error: {exc}", exc_info=True)
+            failed = [t["path"] for t in self.tasks]
+        self.done.emit(failed)
 
 
 # ---------------------------------------------------------------------------
@@ -891,6 +1169,62 @@ class ScheduledPost:
 # Main widget
 # ---------------------------------------------------------------------------
 
+def _draft_file() -> Path:
+    from config.paths import USER_CONFIG_DIR
+    return USER_CONFIG_DIR / "upload_draft.json"
+
+
+def save_upload_draft(videos: dict[str, dict], scheduled: bool) -> int:
+    """Grava os vídeos ainda não enviados (legenda, hashtags, horário). Retorna quantos salvou.
+
+    Lista vazia apaga o rascunho.
+    """
+    import json
+
+    entries = [
+        {
+            "path": path,
+            "caption": data.get("caption", ""),
+            "hashtags": list(data.get("hashtags", [])),
+            "schedule": data["schedule"].isoformat(timespec="minutes") if data.get("schedule") else None,
+        }
+        for path, data in videos.items()
+        if data.get("status") != "ok"
+    ]
+    target = _draft_file()
+    if not entries:
+        target.unlink(missing_ok=True)
+        return 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "scheduled": scheduled,
+        "videos": entries,
+    }
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(target)
+    return len(entries)
+
+
+def load_upload_draft() -> dict | None:
+    """Lê o rascunho salvo; None se não existir ou estiver corrompido."""
+    import json
+
+    target = _draft_file()
+    if not target.exists():
+        return None
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        for v in payload.get("videos", []):
+            v["schedule"] = datetime.fromisoformat(v["schedule"]) if v.get("schedule") else None
+        return payload
+    except Exception as exc:
+        logger.warning(f"Rascunho de upload ilegível ({target}): {exc}")
+        return None
+
+
 class UploadWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -902,26 +1236,28 @@ class UploadWidget(QWidget):
         self._countdown_timer.start(1000)
         self.login_thread: LoginThread | None = None
         self.upload_thread: UploaderThread | None = None
+        self._ai_thread: AIGeneratorThread | None = None
         self._init_ui()
         self._refresh_accounts()
+        self._restore_draft()
 
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
 
-    # Palette constants — single source of truth for the Apple-style theme
-    _BG_CARD     = "#111827"      # card background (near-black, slightly blue)
-    _BG_FIELD    = "#0D1520"      # input field background
-    _BORDER      = "#1F2D3D"      # subtle card border
+    # Paleta — espelha os tokens zinc de modern_theme.qss
+    _BG_CARD     = "#0c0c0e"      # card (zinc)
+    _BG_FIELD    = "#09090b"      # input field background
+    _BORDER      = "#27272a"      # borda (zinc-800)
     _BORDER_FOCUS= "#3B82F6"      # blue focus ring
-    _TEXT_PRI    = "#F0F4FF"      # primary text (near-white, cool tint)
-    _TEXT_SEC    = "#64748B"      # secondary / hint text
-    _TEXT_DIM    = "#374151"      # very dim (placeholders)
+    _TEXT_PRI    = "#fafafa"      # primary text (near-white, cool tint)
+    _TEXT_SEC    = "#71717a"      # secondary / hint text
+    _TEXT_DIM    = "#3f3f46"      # very dim (placeholders)
     _ACCENT      = "#3B82F6"      # TikTok-blue accent
     _PINK        = "#EC4899"      # TikTok-pink CTA
 
-    def _card_style(self, radius: int = 18) -> str:
-        """Return a QGroupBox stylesheet that looks like an Apple card."""
+    def _card_style(self, radius: int = 12) -> str:
+        """Stylesheet de QGroupBox no estilo card."""
         return f"""
             QGroupBox {{
                 background: {self._BG_CARD};
@@ -970,11 +1306,12 @@ class UploadWidget(QWidget):
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background: {self._BORDER};
+                background: rgba(59, 130, 246, 0.12);
                 border-color: {self._ACCENT};
-                color: {self._ACCENT};
+                color: #93C5FD;
             }}
-            QPushButton:pressed {{ background: #0D1520; }}
+            QPushButton:pressed {{ background: rgba(59, 130, 246, 0.22); }}
+            QPushButton:disabled {{ color: {self._TEXT_DIM}; border-color: {self._BORDER}; }}
         """
 
     def _divider(self) -> QFrame:
@@ -999,7 +1336,7 @@ class UploadWidget(QWidget):
                 width: 6px; background: transparent; margin: 0;
             }
             QScrollBar::handle:vertical {
-                background: #1F2D3D; border-radius: 3px; min-height: 30px;
+                background: #18181b; border-radius: 3px; min-height: 30px;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
@@ -1057,7 +1394,7 @@ class UploadWidget(QWidget):
             }}
             QPushButton:hover {{ background: #2563EB; }}
             QPushButton:pressed {{ background: #1D4ED8; }}
-            QPushButton:disabled {{ background: #1F2D3D; color: {self._TEXT_SEC}; }}
+            QPushButton:disabled {{ background: #18181b; color: {self._TEXT_SEC}; }}
         """)
         self.btn_add_account.clicked.connect(self._on_add_account)
 
@@ -1186,6 +1523,11 @@ class UploadWidget(QWidget):
         meta_layout.setSpacing(14)
         meta_layout.setContentsMargins(0, 12, 0, 0)
 
+        self.lbl_current_video = QLabel()
+        self.lbl_current_video.setWordWrap(True)
+        self.lbl_current_video.setStyleSheet(self._label_style(11, bold=False, color=self._TEXT_SEC))
+        meta_layout.addWidget(self.lbl_current_video)
+
         # Description field
         lbl_desc_row = QHBoxLayout()
         lbl_desc = QLabel("Descrição")
@@ -1234,6 +1576,13 @@ class UploadWidget(QWidget):
         self.btn_ai_desc.clicked.connect(self._generate_ai_desc)
         lbl_desc_row.addWidget(self.btn_ai_desc)
 
+        self.btn_ai_all = QPushButton("✨ IA p/ todos")
+        self.btn_ai_all.setToolTip("Gera descrição + hashtags para todos os vídeos da lista")
+        self.btn_ai_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ai_all.setStyleSheet(self.btn_ai_desc.styleSheet())
+        self.btn_ai_all.clicked.connect(self._generate_ai_all)
+        lbl_desc_row.addWidget(self.btn_ai_all)
+
         self.btn_change_api_key = QPushButton("🔑")
         self.btn_change_api_key.setToolTip("Alterar API Key do Gemini")
         self.btn_change_api_key.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1272,9 +1621,17 @@ class UploadWidget(QWidget):
         meta_layout.addWidget(self._divider())
 
         # Hashtags
+        ht_row = QHBoxLayout()
         lbl_ht = QLabel("# Hashtags")
         lbl_ht.setStyleSheet(self._label_style(12))
-        meta_layout.addWidget(lbl_ht)
+        ht_row.addWidget(lbl_ht)
+        ht_row.addStretch()
+        self.btn_tags_all = QPushButton("Aplicar a todos")
+        self.btn_tags_all.setToolTip("Copia as hashtags deste vídeo para todos os vídeos da lista")
+        self.btn_tags_all.setStyleSheet(self._btn_secondary_style())
+        self.btn_tags_all.clicked.connect(self._apply_tags_to_all)
+        ht_row.addWidget(self.btn_tags_all)
+        meta_layout.addLayout(ht_row)
 
         self.hashtag_bar = HashtagBar()
         meta_layout.addWidget(self.hashtag_bar)
@@ -1347,30 +1704,38 @@ class UploadWidget(QWidget):
         toggle_row.addStretch()
         sched_layout.addLayout(toggle_row)
 
+        self.sched_panel = QWidget()
+        sched_panel_layout = QVBoxLayout(self.sched_panel)
+        sched_panel_layout.setContentsMargins(0, 0, 0, 0)
+        sched_panel_layout.setSpacing(8)
+
+        pattern_row = QHBoxLayout()
+        self.btn_daily_pattern = QPushButton("📆  Padrão diário…")
+        self.btn_daily_pattern.setToolTip(
+            "Distribui os vídeos da lista em horários fixos por dia (ex.: 15h, 19h, 23h)"
+        )
+        self.btn_daily_pattern.setStyleSheet(self._btn_secondary_style())
+        self.btn_daily_pattern.clicked.connect(self._open_daily_pattern)
+        pattern_row.addWidget(self.btn_daily_pattern)
+        self.lbl_sched_info = QLabel()
+        self.lbl_sched_info.setStyleSheet(self._label_style(11, bold=False, color=self._TEXT_SEC))
+        pattern_row.addWidget(self.lbl_sched_info)
+        pattern_row.addStretch()
+        sched_panel_layout.addLayout(pattern_row)
+
+        self.lbl_sched_video = QLabel()
+        self.lbl_sched_video.setStyleSheet(self._label_style(11, bold=False, color=self._TEXT_SEC))
+        sched_panel_layout.addWidget(self.lbl_sched_video)
+
         self.dt_picker = InlineDateTimePicker()
-        self.dt_picker.setVisible(False)
-        
-        self.interval_widget = QWidget()
-        interval_layout = QHBoxLayout(self.interval_widget)
-        interval_layout.setContentsMargins(0, 0, 0, 0)
-        lbl_interval = QLabel("Intervalo entre posts (minutos):")
-        lbl_interval.setStyleSheet(self._label_style(12))
-        self.spin_interval = QSpinBox()
-        self.spin_interval.setRange(15, 1440)
-        self.spin_interval.setValue(60)
-        self.spin_interval.setStyleSheet(self._field_style(10))
-        interval_layout.addWidget(lbl_interval)
-        interval_layout.addWidget(self.spin_interval)
-        interval_layout.addStretch()
-        self.interval_widget.setVisible(False)
+        self.dt_picker.changed.connect(self._on_schedule_edited)
+        sched_panel_layout.addWidget(self.dt_picker)
+        self.sched_panel.setVisible(False)
 
         # radio_now/later are now QPushButtons — use clicked instead of toggled
-        self.radio_now.clicked.connect(lambda: self.dt_picker.setVisible(False))
-        self.radio_now.clicked.connect(lambda: self.interval_widget.setVisible(False))
-        self.radio_later.clicked.connect(lambda: self.dt_picker.setVisible(True))
-        self.radio_later.clicked.connect(lambda: self.interval_widget.setVisible(True))
-        sched_layout.addWidget(self.dt_picker)
-        sched_layout.addWidget(self.interval_widget)
+        self.radio_now.clicked.connect(lambda: self.sched_panel.setVisible(False))
+        self.radio_later.clicked.connect(lambda: self.sched_panel.setVisible(True))
+        sched_layout.addWidget(self.sched_panel)
         root.addWidget(sched_card)
 
         # ── 5. Queue card (hidden until scheduled posts exist) ────────
@@ -1393,7 +1758,11 @@ class UploadWidget(QWidget):
         """)
         queue_layout.addWidget(self.queue_list)
 
-        btn_cancel = QPushButton("Cancelar Selecionado")
+        btn_cancel = QPushButton("Remover da lista")
+        btn_cancel.setToolTip(
+            "Só tira da lista local. O agendamento já está no TikTok — "
+            "para cancelar, exclua o post agendado no TikTok Studio."
+        )
         btn_cancel.setStyleSheet(self._btn_secondary_style())
         btn_cancel.clicked.connect(self._cancel_selected)
         queue_layout.addWidget(btn_cancel)
@@ -1403,63 +1772,108 @@ class UploadWidget(QWidget):
 
         # ── 6. CTA Upload button ──────────────────────────────────────
         self.btn_upload = QPushButton("🚀  Enviar para TikTok")
-        self.btn_upload.setMinimumHeight(54)
+        self.btn_upload.setMinimumHeight(46)
         self.btn_upload.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_upload.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 15px;
-                font-weight: 800;
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #EC4899, stop:1 #8B5CF6
-                );
-                color: white;
-                border: none;
-                border-radius: 16px;
-                letter-spacing: 0.5px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #DB2777, stop:1 #7C3AED
-                );
-            }}
-            QPushButton:pressed {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #BE185D, stop:1 #6D28D9
-                );
-            }}
-            QPushButton:disabled {{
-                background: {self._BORDER};
-                color: {self._TEXT_SEC};
-            }}
-        """)
+        self.btn_upload.setObjectName("CtaButton")
         self.btn_upload.clicked.connect(self._handle_action)
-        root.addWidget(self.btn_upload)
+
+        self.btn_save_draft = QPushButton("💾  Salvar para depois")
+        self.btn_save_draft.setMinimumHeight(46)
+        self.btn_save_draft.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_save_draft.setToolTip(
+            "Guarda os vídeos, legendas, hashtags e horários.\n"
+            "Ao abrir o app de novo, a lista volta como estava."
+        )
+        self.btn_save_draft.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 13px; font-weight: 700; padding: 0 22px;
+                background: {self._BG_CARD}; color: {self._TEXT_PRI};
+                border: 1.5px solid {self._BORDER}; border-radius: 16px;
+            }}
+            QPushButton:hover {{ border-color: {self._ACCENT}; color: #93C5FD; }}
+            QPushButton:pressed {{ background: {self._BG_FIELD}; }}
+            QPushButton:disabled {{ color: {self._TEXT_SEC}; }}
+        """)
+        self.btn_save_draft.clicked.connect(self._save_draft)
+
+        # Rodapé fixo fora do scroll: o botão de enviar fica sempre visível
+        footer = QFrame()
+        footer.setObjectName("UploadFooter")
+        footer.setStyleSheet(
+            f"QFrame#UploadFooter {{ background: transparent;"
+            f" border-top: 1px solid {self._BORDER}; }}"
+        )
+        footer_lay = QVBoxLayout(footer)
+        footer_lay.setContentsMargins(16, 10, 16, 10)
+        footer_lay.setSpacing(6)
+
+        cta_row = QHBoxLayout()
+        cta_row.setSpacing(10)
+        cta_row.addWidget(self.btn_save_draft)
+        cta_row.addWidget(self.btn_upload, 1)
+        footer_lay.addLayout(cta_row)
 
         self.lbl_progress = QLabel("")
         self.lbl_progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_progress.setWordWrap(True)
         self.lbl_progress.setStyleSheet(self._label_style(12, bold=False, color=self._TEXT_SEC))
-        root.addWidget(self.lbl_progress)
+        footer_lay.addWidget(self.lbl_progress)
+        outer.addWidget(footer)
 
         root.addStretch()
         
         # Connect signals for per-video metadata
         self.file_list.currentItemChanged.connect(self._on_file_selected)
         self.txt_caption.textChanged.connect(self._on_meta_edited)
+        self.hashtag_bar.changed.connect(self._on_meta_edited)
+        for btn in self.findChildren(QPushButton):
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._update_meta_fields()
 
     # ------------------------------------------------------------------
     # Per-video metadata helpers
     # ------------------------------------------------------------------
 
+    _PATH_ROLE = Qt.ItemDataRole.UserRole
+
+    def _item_path(self, item: QListWidgetItem) -> str:
+        return item.data(self._PATH_ROLE)
+
+    def _find_item(self, path: str) -> QListWidgetItem | None:
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            if self._item_path(item) == path:
+                return item
+        return None
+
+    def _add_video(self, path: str) -> None:
+        """Adiciona o vídeo à lista (ignora duplicados) com metadados vazios."""
+        if path in self._video_metadata:
+            return
+        self._video_metadata[path] = {"caption": "", "hashtags": [], "status": None, "schedule": None}
+        item = QListWidgetItem()
+        item.setData(self._PATH_ROLE, path)
+        item.setToolTip(path)
+        self.file_list.addItem(item)
+        self._refresh_item(path)
+        if self.file_list.currentItem() is None:
+            self.file_list.setCurrentItem(item)
+
+    def _refresh_item(self, path: str) -> None:
+        """Atualiza o texto do item: status do envio + se já tem legenda/hashtags."""
+        item = self._find_item(path)
+        data = self._video_metadata.get(path)
+        if item is None or data is None:
+            return
+        status = {"ok": "🚀", "fail": "❌"}.get(data.get("status"), "")
+        filled = "📝" if data["caption"].strip() or data["hashtags"] else "⬜"
+        n_tags = len(data["hashtags"])
+        tags = f"  · {n_tags} #" if n_tags else ""
+        when = f"  · 🕒 {data['schedule']:%d/%m %H:%M}" if data.get("schedule") else ""
+        item.setText(f"{status}{filled}  {Path(path).name}{tags}{when}")
+
     def _on_file_selected(self, current, previous):
-        if current:
-            self._current_video = current.text()
-        else:
-            self._current_video = None
+        self._current_video = self._item_path(current) if current else None
         self._update_meta_fields()
 
     def _update_meta_fields(self):
@@ -1468,51 +1882,171 @@ class UploadWidget(QWidget):
             self.txt_caption.clear()
             self.txt_caption.setEnabled(False)
             self.txt_caption.blockSignals(False)
+            self.hashtag_bar.set_tags([])
+            self.hashtag_bar.setEnabled(False)
+            self.lbl_current_video.setText("Selecione um vídeo na lista para editar descrição e hashtags.")
+            self.dt_picker.setEnabled(False)
+            self.lbl_sched_video.setText("Selecione um vídeo para definir o horário dele.")
+            self._update_sched_info()
             return
 
         self.txt_caption.setEnabled(True)
-        data = self._video_metadata.get(self._current_video, {"caption": ""})
+        self.hashtag_bar.setEnabled(True)
+        self.lbl_current_video.setText(f"Editando: {Path(self._current_video).name}")
+        data = self._video_metadata.get(self._current_video, {"caption": "", "hashtags": []})
         self.txt_caption.blockSignals(True)
         self.txt_caption.setPlainText(data.get("caption", ""))
         self.txt_caption.blockSignals(False)
+        self.hashtag_bar.set_tags(data.get("hashtags", []))
         self._on_caption_changed()
+
+        self.dt_picker.setEnabled(True)
+        self.lbl_sched_video.setText(f"Horário de: {Path(self._current_video).name}")
+        self.dt_picker.set_datetime(data.get("schedule"))
+        self._update_sched_info()
+
+    def _on_schedule_edited(self):
+        if self._current_video and self._current_video in self._video_metadata:
+            self._video_metadata[self._current_video]["schedule"] = self.dt_picker.selected_datetime()
+            self._refresh_item(self._current_video)
+            self._update_sched_info()
+
+    def _update_sched_info(self):
+        pending = [d for d in self._video_metadata.values() if d.get("status") != "ok"]
+        with_time = sum(1 for d in pending if d.get("schedule"))
+        self.lbl_sched_info.setText(f"{with_time} de {len(pending)} vídeo(s) com horário")
+
+    def _open_daily_pattern(self):
+        targets = [f for f in self.get_selected_files()
+                   if self._video_metadata[f].get("status") != "ok"]
+        if not targets:
+            QMessageBox.warning(self, "Aviso", "Adicione vídeos na lista primeiro.")
+            return
+        dlg = DailyPatternDialog(self.dt_picker.shortcut_times(), len(targets), self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        times = dlg.result_times()
+        slots = build_daily_schedule(len(targets), times, dlg.start_date())
+        if not slots:
+            return
+        self.dt_picker.set_shortcut_times(times)
+        for path, dt in zip(targets, slots):
+            self._video_metadata[path]["schedule"] = dt
+            self._refresh_item(path)
+        self._update_meta_fields()
+        self.lbl_progress.setText(
+            f"📆 {len(slots)} vídeo(s) programados de {slots[0]:%d/%m %H:%M} até {slots[-1]:%d/%m %H:%M}."
+        )
 
     def _on_meta_edited(self):
         if self._current_video and self._current_video in self._video_metadata:
-            self._video_metadata[self._current_video]["caption"] = self.txt_caption.toPlainText()
+            data = self._video_metadata[self._current_video]
+            data["caption"] = self.txt_caption.toPlainText()
+            data["hashtags"] = self.hashtag_bar.get_tags()
+            self._refresh_item(self._current_video)
+
+    def _save_draft(self, silent: bool = False) -> None:
+        """Salva o rascunho; `silent` só atualiza o arquivo se ele já existir (pós-envio)."""
+        if silent and not _draft_file().exists():
+            return
+        try:
+            n = save_upload_draft(self._video_metadata, self.radio_later.isChecked())
+        except OSError as exc:
+            logger.error(f"Falha ao salvar rascunho: {exc}")
+            if not silent:
+                QMessageBox.critical(self, "Erro", f"Não consegui salvar o rascunho:\n{exc}")
+            return
+        if silent:
+            return
+        if n:
+            self.lbl_progress.setText(
+                f"💾 Rascunho salvo ({n} vídeo(s)) às {datetime.now():%H:%M} — volta ao abrir o app."
+            )
+        else:
+            self.lbl_progress.setText("💾 Nada pendente — rascunho apagado.")
+
+    def _restore_draft(self) -> None:
+        """Recarrega o rascunho salvo (pula arquivos que não existem mais)."""
+        payload = load_upload_draft()
+        if not payload:
+            return
+        missing = 0
+        for v in payload.get("videos", []):
+            path = v.get("path", "")
+            if not Path(path).exists():
+                missing += 1
+                continue
+            self._add_video(path)
+            self._video_metadata[path].update(
+                caption=v.get("caption", ""),
+                hashtags=list(v.get("hashtags", [])),
+                schedule=v.get("schedule"),
+            )
+            self._refresh_item(path)
+        if payload.get("scheduled"):
+            self.radio_later.setChecked(True)
+            self.sched_panel.setVisible(True)
+        self._update_meta_fields()
+        restored = len(payload.get("videos", [])) - missing
+        msg = f"💾 Rascunho de {payload.get('saved_at', '')[:16].replace('T', ' ')} restaurado: {restored} vídeo(s)"
+        if missing:
+            msg += f" ({missing} arquivo(s) não encontrados foram ignorados)"
+        self.lbl_progress.setText(msg + ".")
+
+    def _apply_tags_to_all(self):
+        if not self._current_video:
+            QMessageBox.warning(self, "Aviso", "Selecione um vídeo na lista primeiro.")
+            return
+        tags = self.hashtag_bar.get_tags()
+        for path, data in self._video_metadata.items():
+            data["hashtags"] = list(tags)
+            self._refresh_item(path)
+        self.lbl_progress.setText(f"# Hashtags aplicadas a {len(self._video_metadata)} vídeo(s).")
 
     def _change_api_key(self):
         from config.settings import settings
         current_key = getattr(settings, 'gemini_api_key', '')
+        # Não pré-preenche a chave: só mostra os 4 últimos caracteres
+        hint = f"Chave atual: ••••{current_key[-4:]}\n" if current_key else "Nenhuma chave salva.\n"
         api_key, ok = QInputDialog.getText(
             self, "Alterar API Key do Gemini",
-            "Insira sua nova chave de API do Google Gemini:\n(Se for inválida ou vazia, pediremos novamente no uso)",
+            hint + "Insira sua nova chave de API do Google Gemini:\n(Se for inválida ou vazia, pediremos novamente no uso)",
             QLineEdit.EchoMode.Password,
-            text=current_key
         )
         if ok:
             settings.gemini_api_key = api_key.strip()
             settings.save_config()
             QMessageBox.information(self, "Sucesso", "API Key salva com sucesso!")
 
+    def _ensure_api_key(self) -> str | None:
+        """Retorna a API key do Gemini, pedindo ao usuário se ainda não houver."""
+        from config.settings import settings
+
+        if getattr(settings, 'gemini_api_key', ''):
+            return settings.gemini_api_key
+        api_key, ok = QInputDialog.getText(
+            self, "API Key do Gemini",
+            "Para usar a IA, insira sua chave de API grátis do Google Gemini:\n(Ela será salva localmente)",
+            QLineEdit.EchoMode.Password
+        )
+        if ok and api_key.strip():
+            settings.gemini_api_key = api_key.strip()
+            settings.save_config()
+            return settings.gemini_api_key
+        return None
+
+    def _ai_busy(self) -> bool:
+        return self._ai_thread is not None and self._ai_thread.isRunning()
+
     def _generate_ai_desc(self):
         if not self._current_video:
             QMessageBox.warning(self, "Aviso", "Selecione um vídeo na lista primeiro.")
             return
-
-        from config.settings import settings
-
-        if not hasattr(settings, 'gemini_api_key') or not settings.gemini_api_key:
-            api_key, ok = QInputDialog.getText(
-                self, "API Key do Gemini",
-                "Para usar a IA, insira sua chave de API grátis do Google Gemini:\n(Ela será salva localmente)",
-                QLineEdit.EchoMode.Password
-            )
-            if ok and api_key.strip():
-                settings.gemini_api_key = api_key.strip()
-                settings.save_config()
-            else:
-                return
+        if self._ai_busy():
+            return
+        api_key = self._ensure_api_key()
+        if not api_key:
+            return
 
         context, ok = QInputDialog.getText(
             self, "Contexto do Vídeo (IA)",
@@ -1520,31 +2054,75 @@ class UploadWidget(QWidget):
         )
         if not ok or not context.strip():
             return
+        self._start_ai(api_key, [(self._current_video, context.strip())])
 
-        self.btn_ai_desc.setEnabled(False)
-        self.btn_ai_desc.setText("⏳ Gerando...")
-
-        lang = self.combo_ai_lang.currentText()
-        self._ai_thread = AIGeneratorThread(settings.gemini_api_key, context.strip(), language=lang)
-        self._ai_thread.finished.connect(self._on_ai_desc_ready)
-        self._ai_thread.start()
-
-    def _on_ai_desc_ready(self, success, text, tags):
-        self.btn_ai_desc.setEnabled(True)
-        self.btn_ai_desc.setText("✨ Criar com IA")
-        
-        if not success:
-            QMessageBox.critical(self, "Erro", f"Tivemos um problema com a resposta do Gemini:\n{text}")
+    def _generate_ai_all(self):
+        paths = self.get_selected_files()
+        if not paths:
+            QMessageBox.warning(self, "Aviso", "Adicione vídeos na lista primeiro.")
+            return
+        if self._ai_busy():
+            return
+        api_key = self._ensure_api_key()
+        if not api_key:
             return
 
-        self.txt_caption.setPlainText(text)
-        
-        if tags:
-            self.hashtag_bar.clear()
-            for t in tags:
-                if not t.startswith("#"):
-                    t = "#" + t
-                self.hashtag_bar._add_tag(t)
+        context, ok = QInputDialog.getText(
+            self, "Contexto dos Vídeos (IA)",
+            f"Vai gerar descrição + hashtags para {len(paths)} vídeo(s).\n"
+            "Contexto geral (opcional — o nome de cada arquivo também é usado):",
+        )
+        if not ok:
+            return
+        general = context.strip()
+        items = []
+        for path in paths:
+            name = re.sub(r"[_\-.]+", " ", Path(path).stem).strip()
+            ctx = f"Título/arquivo do vídeo: {name}"
+            items.append((path, f"{general}. {ctx}" if general else ctx))
+        self._start_ai(api_key, items)
+
+    def _start_ai(self, api_key: str, items: list[tuple[str, str]]):
+        self.btn_ai_desc.setEnabled(False)
+        self.btn_ai_all.setEnabled(False)
+        self.btn_ai_desc.setText("⏳ Gerando...")
+        self._ai_errors: list[str] = []
+
+        lang = self.combo_ai_lang.currentText()
+        self._ai_thread = AIGeneratorThread(api_key, items, language=lang)
+        self._ai_thread.item_done.connect(self._on_ai_item_done)
+        self._ai_thread.item_failed.connect(self._on_ai_item_failed)
+        self._ai_thread.progress.connect(
+            lambda done, total: self.lbl_progress.setText(f"✨ IA: {done}/{total} vídeo(s) processado(s)…")
+        )
+        self._ai_thread.finished.connect(self._on_ai_finished)
+        self._ai_thread.start()
+
+    def _on_ai_item_done(self, path: str, text: str, tags: list):
+        data = self._video_metadata.get(path)
+        if data is None:  # removido da lista enquanto a IA rodava
+            return
+        data["caption"] = text
+        data["hashtags"] = [str(t).strip().lstrip("#") for t in tags if str(t).strip()]
+        self._refresh_item(path)
+        if path == self._current_video:
+            self._update_meta_fields()
+
+    def _on_ai_item_failed(self, path: str, msg: str):
+        self._ai_errors.append(f"{Path(path).name}: {msg}")
+
+    def _on_ai_finished(self):
+        self.btn_ai_desc.setEnabled(True)
+        self.btn_ai_all.setEnabled(True)
+        self.btn_ai_desc.setText("✨ Criar com IA")
+        if self._ai_errors:
+            QMessageBox.critical(
+                self, "Erro",
+                "Tivemos um problema com a resposta do Gemini:\n\n" + "\n\n".join(self._ai_errors[:5]),
+            )
+            self.lbl_progress.setText(f"⚠️ IA terminou com {len(self._ai_errors)} erro(s).")
+        else:
+            self.lbl_progress.setText("✨ Descrições e hashtags geradas!")
 
     # ------------------------------------------------------------------
     # Caption char counter
@@ -1648,17 +2226,12 @@ class UploadWidget(QWidget):
         filenames, _ = QFileDialog.getOpenFileNames(
             self, "Selecionar Vídeos", "", "Video Files (*.mp4 *.mov *.avi *.mkv)"
         )
-        if filenames:
-            for f in filenames:
-                if f not in self._video_metadata:
-                    self._video_metadata[f] = {"caption": ""}
-            self.file_list.addItems(filenames)
+        for f in filenames:
+            self._add_video(f)
 
     def _remove_selected_files(self):
         for item in self.file_list.selectedItems():
-            text = item.text()
-            if text in self._video_metadata:
-                del self._video_metadata[text]
+            self._video_metadata.pop(self._item_path(item), None)
             self.file_list.takeItem(self.file_list.row(item))
         if self.file_list.count() == 0:
             self._current_video = None
@@ -1671,21 +2244,26 @@ class UploadWidget(QWidget):
         self._update_meta_fields()
 
     def get_selected_files(self) -> list[str]:
-        return [self.file_list.item(i).text() for i in range(self.file_list.count())]
+        return [self._item_path(self.file_list.item(i)) for i in range(self.file_list.count())]
 
     # ------------------------------------------------------------------
     # Action dispatcher
     # ------------------------------------------------------------------
 
     def _handle_action(self):
+        if self.upload_thread is not None and self.upload_thread.isRunning():
+            return
+
         account_name = self._selected_account_name()
         if not account_name:
             QMessageBox.warning(self, "Erro", "Adicione e selecione uma conta antes de enviar!")
             return
 
-        files = self.get_selected_files()
+        # Já enviados com sucesso ficam de fora (evita postar duplicado ao reenviar falhas)
+        files = [f for f in self.get_selected_files()
+                 if self._video_metadata[f].get("status") != "ok"]
         if not files:
-            QMessageBox.warning(self, "Erro", "Selecione pelo menos um arquivo de vídeo!")
+            QMessageBox.warning(self, "Erro", "Adicione pelo menos um vídeo que ainda não foi enviado!")
             return
 
         for video in files:
@@ -1693,55 +2271,55 @@ class UploadWidget(QWidget):
                 QMessageBox.warning(self, "Erro", f"Arquivo de vídeo não encontrado: {video}")
                 return
 
-        hashtags = self.hashtag_bar.get_tags()
         browser = self.combo_browser.currentText()
-
-        if self.radio_now.isChecked():
-            self._start_batch_upload(account_name, files, hashtags, browser, scheduled=False)
-        else:
-            self._start_batch_upload(account_name, files, hashtags, browser, scheduled=True)
+        self._start_batch_upload(account_name, files, browser, scheduled=self.radio_later.isChecked())
 
     # ------------------------------------------------------------------
     # Batch Upload
     # ------------------------------------------------------------------
 
-    def _start_batch_upload(self, account_name, files, hashtags, browser, scheduled=False):
-        tasks = []
-        
+    def _start_batch_upload(self, account_name, files, browser, scheduled=False):
         if scheduled:
-            base_dt = self.dt_picker.selected_datetime()
-            interval_min = self.spin_interval.value()
-
-            # TikTok requirement validation for the very first video
-            delta_s = (base_dt - datetime.now()).total_seconds()
-            if delta_s < 15 * 60:
+            now = datetime.now()
+            sem_horario = [f for f in files if not self._video_metadata[f].get("schedule")]
+            if sem_horario:
                 QMessageBox.warning(
-                    self,
-                    "Aviso",
-                    "O TikTok exige que o agendamento seja pelo menos 15 minutos no futuro!",
+                    self, "Aviso",
+                    f"{len(sem_horario)} vídeo(s) sem horário. Selecione cada um e defina o horário, "
+                    "ou use o botão 'Padrão diário'.",
+                )
+                return
+            fora = [
+                f"• {Path(f).name} — {self._video_metadata[f]['schedule']:%d/%m %H:%M}"
+                for f in files
+                if not (SCHEDULE_MIN_LEAD
+                        <= self._video_metadata[f]["schedule"] - now
+                        <= SCHEDULE_MAX_AHEAD)
+            ]
+            if fora:
+                QMessageBox.warning(
+                    self, "Aviso",
+                    "O TikTok só aceita agendamentos entre 20 minutos e 10 dias à frente. "
+                    "Ajuste estes vídeos:\n" + "\n".join(fora[:15]),
                 )
                 return
 
-        for i, video in enumerate(files):
-            data = self._video_metadata.get(video, {"caption": ""})
-            caption = data.get("caption", "").strip()
-
-            task = {
+        tasks = []
+        for video in files:
+            data = self._video_metadata[video]
+            tasks.append({
                 "path": video,
-                "title": caption,
-                "hashtags": hashtags,
-            }
-            if scheduled:
-                # Add interval for each subsequent video
-                dt = base_dt + timedelta(minutes=interval_min * i)
-                # tiktok_uploader expects 'YYYY-MM-DD HH:MM:SS' string format
-                task["schedule_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
-                task["_raw_dt"] = dt  # to populate local queue tracking
-            else:
-                task["schedule_time"] = None
-                
-            tasks.append(task)
+                "title": data["caption"].strip(),
+                "hashtags": list(data["hashtags"]),
+                "schedule_time": data["schedule"] if scheduled else None,
+            })
+        # Mais cedo primeiro: o TikTok Studio fica na ordem de publicação
+        if scheduled:
+            tasks.sort(key=lambda t: t["schedule_time"])
 
+        self._pending_tasks = tasks
+        self._pending_account = account_name
+        self._pending_browser = browser
         self.btn_upload.setEnabled(False)
         self.lbl_progress.setText(f"🚀 Iniciando upload de {len(tasks)} vídeo(s) com conta '{account_name}'…")
 
@@ -1752,26 +2330,44 @@ class UploadWidget(QWidget):
             headless=True,
         )
         self.upload_thread.progress.connect(self.lbl_progress.setText)
-        self.upload_thread.finished.connect(self._upload_done)
+        self.upload_thread.done.connect(self._upload_done)
         self.upload_thread.start()
 
-        if scheduled:
-            # Add to local queue display
-            for t in tasks:
+    def _upload_done(self, failed: list):
+        self.btn_upload.setEnabled(True)
+        failed_set = set(failed)
+        tasks = self._pending_tasks
+        for t in tasks:
+            path = t["path"]
+            if path in self._video_metadata:
+                self._video_metadata[path]["status"] = "fail" if path in failed_set else "ok"
+                self._refresh_item(path)
+
+        self._update_sched_info()
+        self._save_draft(silent=True)  # tira do rascunho o que já foi enviado
+        ok_tasks = [t for t in tasks if t["path"] not in failed_set]
+        for t in ok_tasks:
+            if t["schedule_time"]:
                 timer = QTimer(self)
                 timer.setSingleShot(True)
-                post = ScheduledPost(account_name, t["path"], t["title"], hashtags, browser, t["_raw_dt"], timer)
-                self._scheduled_posts.append(post)
-            self._refresh_queue_ui()
+                self._scheduled_posts.append(ScheduledPost(
+                    self._pending_account, t["path"], t["title"], t["hashtags"],
+                    self._pending_browser, t["schedule_time"], timer,
+                ))
+        self._refresh_queue_ui()
 
-    def _upload_done(self, success: bool, msg: str):
-        self.btn_upload.setEnabled(True)
-        if success:
-            QMessageBox.information(self, "Sucesso", msg)
+        if not failed_set:
+            QMessageBox.information(self, "Sucesso", f"{len(tasks)} vídeo(s) enviado(s) com sucesso!")
             self.lbl_progress.setText("✅ Processo concluído!")
         else:
-            QMessageBox.critical(self, "Erro", msg)
-            self.lbl_progress.setText("❌ Falha no processo")
+            names = "\n".join(f"• {Path(p).name}" for p in failed)
+            QMessageBox.critical(
+                self, "Erro",
+                f"{len(failed_set)} de {len(tasks)} vídeo(s) falharam:\n{names}\n\n"
+                "Verifique os cookies da conta e clique em Enviar de novo — "
+                "só os que falharam serão reenviados.",
+            )
+            self.lbl_progress.setText(f"⚠️ {len(ok_tasks)} enviado(s), {len(failed_set)} com falha (❌)")
 
     # ------------------------------------------------------------------
     # Queue display helpers
@@ -1818,7 +2414,5 @@ class UploadWidget(QWidget):
     # ------------------------------------------------------------------
 
     def set_file(self, path: str):
-        """Add a file path programmatically (called after processing)."""
-        if path not in self._video_metadata:
-            self._video_metadata[path] = {"caption": ""}
-        self.file_list.addItem(str(path))
+        """Adiciona um arquivo programaticamente (chamado após o processamento)."""
+        self._add_video(str(path))

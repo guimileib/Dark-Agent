@@ -42,11 +42,7 @@ def _probe_duration(video_path: Path) -> Optional[float]:
 
 
 def _probe_audio_codec(video_path: Path) -> tuple:
-    """Retorna (codec_name, profile, sample_rate) do primeiro stream de áudio.
-
-    Usado pra decidir se podemos pular o re-encode de áudio em queimar_legendas.
-    Tudo em None se ffprobe falhar.
-    """
+    """(codec, profile, sample_rate) do primeiro stream de áudio, ou Nones se o ffprobe falhar."""
     sp_kw: dict = {}
     if sys.platform == "win32":
         sp_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -81,11 +77,9 @@ def _probe_audio_codec(video_path: Path) -> tuple:
 
 
 def _audio_args_for(video_path: Path, allow_passthrough: bool) -> list:
-    """Decide entre `-c:a copy` (passthrough) e `-c:a aac -b:a 192k` (re-encode).
+    """`-c:a copy` se for AAC-LC a 44.1k/48k; senão re-encoda para AAC 192k.
 
-    Passthrough só quando: aac-lc + sample rate 44.1k ou 48k.
-    Sample rates exóticos (8k, HE-AAC, etc.) caem pro re-encode pra evitar
-    arquivos rejeitados pelo TikTok/YouTube.
+    Sample rates exóticos são rejeitados por TikTok/YouTube.
     """
     if not allow_passthrough:
         return ["-c:a", "aac", "-b:a", "192k"]
@@ -108,15 +102,9 @@ def _run_ffmpeg_with_progress(
     output_path: Path,
     timeout: int = 3600,
 ) -> bool:
-    """Executa ffmpeg via Popen, parseia `-progress pipe:1` e drena stderr em thread.
+    """Roda ffmpeg lendo `-progress pipe:1` (que o cmd precisa incluir) e chama progress_callback a cada 1%.
 
-    O fluxo bloqueante de `subprocess.run(capture_output=True)` esconde o
-    progresso do encode até terminar. Aqui lemos `out_time_us=` linha-por-linha
-    e chamamos `progress_callback(pct)` em cada incremento de 1%.
-
-    `cmd` deve incluir `-progress pipe:1` (essa função NÃO adiciona).
-    Stderr é drenado num thread separado para não dar deadlock no buffer
-    quando ffmpeg escreve avisos.
+    Stderr é drenado em outra thread para não travar o buffer.
     """
     sp_kw: dict = {}
     if sys.platform == "win32":
@@ -236,16 +224,9 @@ def _ffmpeg_escape_text(text: str) -> str:
 
 
 def _ffmpeg_escape_path(path: str) -> str:
-    """Escapa um caminho para uso DENTRO de single quotes num filtro FFmpeg.
+    """Escapa um caminho para uso dentro de aspas simples num filtro FFmpeg.
 
-    Aplica três passos cumulativos:
-    - `\\` -> `/`  (forward slashes funcionam melhor no Windows com filtros)
-    - `:`  -> `\\:` (drive letter colon precisa escape no parser do filtro)
-    - `'`  -> `\\'` (apóstrofo fecharia a string single-quoted prematuramente)
-
-    O bug clássico sem o escape de `'`: um arquivo como
-    `Tooth Fairy's Tats.ass` vira `Tooth Fairys Tats.ass` no filtro porque
-    o parser interpreta `'s Tats.ass` como conteúdo fora das aspas.
+    Troca barra invertida por `/` e escapa `:` e `'` (sem isso, "Fairy's.ass" quebra o parser).
     """
     return (
         path.replace("\\", "/")
@@ -268,20 +249,7 @@ class VideoEditor:
         preset: str = "medium",
         progress_callback: Optional[Callable[[float], None]] = None,
     ) -> bool:
-        """
-        Queima legendas ASS no vídeo, com progresso em tempo real.
-
-        Args:
-            video_path: Caminho do vídeo original
-            subtitle_path: Caminho do arquivo ASS
-            output_path: Caminho do vídeo final
-            preset: Preset de encoding (ultrafast, fast, medium, slow)
-            progress_callback: Função opcional chamada com pct (0.0–100.0)
-                a cada incremento de 1% durante o encode.
-
-        Returns:
-            bool indicando sucesso
-        """
+        """Queima legendas .ass no vídeo, reportando progresso (0–100) via progress_callback. Retorna True se deu certo."""
         logger.info(f"Queimando legendas em {video_path}")
 
         # Workaround: o parser interno do filtro `subtitles` quebra com
@@ -353,11 +321,7 @@ class VideoEditor:
         tamanho_fonte: int = 36,
         preset: str = "fast",
     ) -> bool:
-        """Queima um marcador de texto permanente (sempre visível) no vídeo.
-
-        Usado para identificar o vídeo (ex.: "Episódio 5") sem timing —
-        o texto aparece em todos os frames.
-        """
+        """Queima um texto permanente (visível em todos os frames), ex.: "Episódio 5"."""
         if not texto or not texto.strip():
             logger.warning("Marcador vazio — pulando")
             return False
@@ -438,19 +402,7 @@ class VideoEditor:
         posicao: str = "top_right",
         opacidade: float = 0.8
     ) -> bool:
-        """
-        Adiciona logo em overlay no vídeo
-        
-        Args:
-            video_path: Vídeo original
-            logo_path: Imagem do logo (PNG com transparência)
-            output_path: Vídeo final
-            posicao: Posição do logo (top_left, top_right, bottom_left, bottom_right)
-            opacidade: Opacidade do logo (0.0 a 1.0)
-        
-        Returns:
-            bool indicando sucesso
-        """
+        """Sobrepõe um logo PNG no vídeo (posicao: top_left/top_right/bottom_left/bottom_right; opacidade 0–1)."""
         logger.info(f"Adicionando logo ao vídeo")
         
         # Definir posição
@@ -499,18 +451,7 @@ class VideoEditor:
         duracao: float,
         output_path: Path
     ) -> bool:
-        """
-        Corta um trecho do vídeo
-        
-        Args:
-            video_path: Vídeo original
-            inicio: Tempo de início em segundos
-            duracao: Duração do corte em segundos
-            output_path: Arquivo de saída
-        
-        Returns:
-            bool indicando sucesso
-        """
+        """Corta `duracao` segundos a partir de `inicio`. Retorna True se deu certo."""
         logger.info(f"Cortando vídeo: {inicio}s por {duracao}s")
         
         cmd = [
@@ -546,19 +487,7 @@ class VideoEditor:
         duracao_corte: int,
         output_dir: Path
     ) -> List[Path]:
-        """
-        Gera cortes automáticos baseados na transcrição
-        
-        Args:
-            video_path: Vídeo original
-            transcricao: Transcrição com timestamps
-            numero_cortes: Quantidade de cortes a gerar
-            duracao_corte: Duração de cada corte em segundos
-            output_dir: Diretório de saída
-        
-        Returns:
-            Lista de caminhos dos cortes gerados
-        """
+        """Gera `numero_cortes` cortes de `duracao_corte` s a partir da transcrição. Retorna os caminhos."""
         logger.info(f"Gerando {numero_cortes} cortes de {duracao_corte}s")
         
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -603,17 +532,7 @@ class VideoEditor:
         output_path: Path,
         formato: str = "vertical"
     ) -> bool:
-        """
-        Redimensiona vídeo para formato específico
-        
-        Args:
-            video_path: Vídeo original
-            output_path: Vídeo redimensionado
-            formato: "vertical" (9:16), "horizontal" (16:9), "square" (1:1)
-        
-        Returns:
-            bool indicando sucesso
-        """
+        """Redimensiona para "vertical" (9:16), "horizontal" (16:9) ou "square" (1:1). Retorna True se deu certo."""
         formatos = {
             "vertical": "1080:1920",
             "horizontal": "1920:1080",

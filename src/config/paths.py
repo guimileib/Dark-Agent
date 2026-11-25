@@ -1,14 +1,6 @@
-"""
-Path resolution for DarkAgent Pro — works in dev mode AND PyInstaller frozen mode.
+"""Resolução de paths que funciona em dev e no .exe (PyInstaller).
 
-Concepts:
-- BUNDLE_DIR: where bundled read-only assets live (assets/, config/, estilos_padrao.json)
-  - Dev:    G:/DarkAgent/src
-  - Frozen: sys._MEIPASS/src  (temp extraction folder)
-
-- APP_DIR: where the executable (or project root) lives — used for mutable data
-  - Dev:    G:/DarkAgent
-  - Frozen: directory containing DarkAgentLauncher.exe
+BUNDLE_DIR: assets read-only (sys._MEIPASS no .exe). APP_DIR: dados mutáveis ao lado do .exe.
 """
 
 import sys
@@ -17,7 +9,7 @@ from pathlib import Path
 
 
 def is_frozen() -> bool:
-    """Return True when running inside a PyInstaller bundle."""
+    """True quando roda dentro do bundle do PyInstaller."""
     return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
 
@@ -30,7 +22,7 @@ def _get_bundle_dir() -> Path:
 
 
 def _is_writable(path: Path) -> bool:
-    """Probe whether `path` is writable by creating and deleting a tiny file."""
+    """Testa se `path` é gravável criando e apagando um arquivo pequeno."""
     try:
         path.mkdir(parents=True, exist_ok=True)
         probe = path / ".write_probe"
@@ -42,12 +34,9 @@ def _is_writable(path: Path) -> bool:
 
 
 def _get_app_dir() -> Path:
-    """Mutable data root.
+    """Raiz de dados mutáveis.
 
-    Frozen mode: prefer the directory containing the .exe (portable behavior),
-    but if it is read-only — e.g. user dropped the .exe inside Program Files
-    or another protected location — fall back to %LOCALAPPDATA%/DarkAgentPro
-    so the app can still write logs, cache, and config without admin elevation.
+    No .exe usa a pasta do executável; se for read-only (ex.: Program Files), cai para %LOCALAPPDATA%/DarkAgentPro.
     """
     if is_frozen():
         exe_dir = Path(sys.executable).resolve().parent
@@ -99,32 +88,25 @@ FFMPEG_DIR = APP_DIR / "ffmpeg"
 
 
 def ensure_dirs() -> None:
-    """Create all mutable directories if they don't exist."""
+    """Cria todos os diretórios mutáveis que ainda não existem."""
     for d in (OUTPUT_DIR, CACHE_DIR, MODELS_DIR, ACCOUNTS_DIR, LOGS_DIR, TEMP_DIR, USER_CONFIG_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
 def get_log_path(name: str) -> Path:
-    """Return a path for a log file inside LOGS_DIR."""
+    """Caminho de um arquivo de log dentro de LOGS_DIR."""
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     return LOGS_DIR / name
 
 
 def get_user_config_file() -> Path:
-    """Return path to the user-writable config.json."""
+    """Caminho do config.json gravável do usuário."""
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     return USER_CONFIG_DIR / "config.json"
 
 
 def output_subdir(base: Path, kind: str) -> Path:
-    """Resolve uma subpasta semântica dentro da pasta de output do usuário.
-
-    `kind` deve ser uma das constantes OUTPUT_RAW / OUTPUT_FINAL / OUTPUT_CLIPS
-    / OUTPUT_TEMP. Cria a subpasta se não existir e retorna o Path.
-
-    Útil pra evitar que downloads brutos, vídeos finais, clips e arquivos
-    transitórios fiquem misturados num único nível.
-    """
+    """Retorna (e cria) a subpasta `kind` (OUTPUT_RAW/FINAL/CLIPS/TEMP) dentro do output do usuário."""
     sub = Path(base) / kind
     sub.mkdir(parents=True, exist_ok=True)
     return sub

@@ -1,12 +1,6 @@
-"""
-DarkAgent Pro — Launcher with visible splash/installer UI.
+"""Entry point do .exe: splash imediato, instala o FFmpeg se faltar e chama main.main().
 
-Responsible for:
-- Showing a PyQt6 splash window as early as possible (so the user sees something
-  immediately after the PyInstaller onefile bundle finishes extracting).
-- Ensuring FFmpeg is available; downloads/extracts it in a background QThread,
-  updating the splash with a determinate progress bar.
-- Handing control over to `main.main()`, which reuses the existing QApplication.
+Também despacha `exe -m yt_dlp` (usado pelo downloader) antes de qualquer outra coisa.
 """
 
 import sys
@@ -81,7 +75,7 @@ FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 # ---------------------------------------------------------------------------
 
 def check_ffmpeg() -> bool:
-    """Check if FFmpeg is available in PATH or in the local ffmpeg/ directory."""
+    """True se o FFmpeg está no PATH ou na pasta ffmpeg/ local."""
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):
         return True
 
@@ -116,7 +110,7 @@ from PyQt6.QtWidgets import (  # noqa: E402
 
 
 class FFmpegInstallerThread(QThread):
-    """Downloads and extracts FFmpeg off the main thread."""
+    """Baixa e extrai o FFmpeg fora da thread principal."""
 
     progress = pyqtSignal(int, int, int)  # percent, downloaded_bytes, total_bytes
     status = pyqtSignal(str)
@@ -200,7 +194,7 @@ class FFmpegInstallerThread(QThread):
 
 
 class LauncherSplash(QWidget):
-    """Frameless splash shown by the launcher during FFmpeg setup."""
+    """Splash sem moldura exibido pelo launcher durante a instalação do FFmpeg."""
 
     def __init__(self):
         super().__init__(None)
@@ -371,7 +365,7 @@ def _format_bytes(n: int) -> str:
 
 
 def _install_ffmpeg_with_ui(splash: LauncherSplash) -> bool:
-    """Run the FFmpeg installer in a QThread, updating the splash. Returns True on success."""
+    """Roda o instalador do FFmpeg num QThread atualizando o splash. Retorna True se deu certo."""
     thread = FFmpegInstallerThread()
 
     result = {"success": False, "error": ""}

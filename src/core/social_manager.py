@@ -13,11 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def _atomic_write_json(path: Path, data) -> None:
-    """Escreve JSON de forma atômica: arquivo temporário + os.replace.
-
-    Garante que um crash no meio do dump não corrompa o arquivo original —
-    ou o conteúdo antigo continua intacto, ou o novo substitui integralmente.
-    """
+    """Grava JSON de forma atômica (tmp + os.replace): um crash no meio não corrompe o arquivo."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_fd, tmp_name = tempfile.mkstemp(
         prefix=path.name + ".", suffix=".tmp", dir=str(path.parent)
@@ -81,7 +77,7 @@ class ScheduledPost:
         return asdict(self)
 
 class SocialManager:
-    """Manages social accounts and scheduled posts."""
+    """Gerencia contas sociais e posts agendados."""
     
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir

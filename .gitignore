@@ -41,8 +41,6 @@ env/
 Thumbs.db
 
 # Diretórios de trabalho
-# Ancorados na raiz: sem a "/", `models/` também ignorava src/models/ (pacote
-# de código) e o build do CI saía sem ele.
 /output/
 /cache/
 /temp/
@@ -113,3 +111,9 @@ nul
 # docs
 CLAUDE.md
 .claude
+
+# impeccable 
+.github/agents
+.github/hooks
+.github/skills
+.impeccable
